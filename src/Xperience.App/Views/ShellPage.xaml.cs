@@ -3143,6 +3143,26 @@ public sealed partial class ShellPage : Page
         e.Handled = true;
     }
 
+    private void OnYouTubePlaylistImportModalBackdropTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.CloseYouTubePlaylistImportModalCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void OnDeletePlaylistConfirmationBackdropTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.CancelDeletePlaylistCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void OnYouTubeImportPlaylistItemClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: YouTubePlaylistImportItemViewModel item })
+        {
+            ViewModel.ToggleYouTubeImportItemSelection(item);
+        }
+    }
+
     private void OnDownloadCandidatesModalBackdropTapped(object sender, TappedRoutedEventArgs e)
     {
         ViewModel.CloseDownloadOptionsModalCommand.Execute(null);
@@ -3267,6 +3287,64 @@ public sealed partial class ShellPage : Page
         {
             await ViewModel.PlayPlaylistDirectlyAsync(playlist);
         }
+    }
+
+    private void OnPlaylistCardRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element)
+        {
+            return;
+        }
+
+        PlaylistCardViewModel? card = element.Tag as PlaylistCardViewModel;
+        UserPlaylist? playlist = card?.Playlist ?? element.Tag as UserPlaylist;
+        if (playlist is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var flyout = new MenuFlyout();
+
+        var openItem = new MenuFlyoutItem
+        {
+            Text = "Open Playlist",
+            Icon = new FontIcon { Glyph = "\uE8A7" }
+        };
+        openItem.Click += async (_, _) =>
+        {
+            _ = CatalogScrollViewer.ChangeView(null, 0, null, disableAnimation: false);
+            await ViewModel.OpenPlaylistDetailAsync(playlist);
+        };
+        flyout.Items.Add(openItem);
+
+        if (playlist.Tracks.Count > 0)
+        {
+            var playItem = new MenuFlyoutItem
+            {
+                Text = "Play Playlist",
+                Icon = new FontIcon { Glyph = "\uE768" }
+            };
+            playItem.Click += async (_, _) => await ViewModel.PlayPlaylistDirectlyAsync(playlist);
+            flyout.Items.Add(playItem);
+        }
+
+        if (!playlist.IsSmartSuggestion)
+        {
+            flyout.Items.Add(new MenuFlyoutSeparator());
+
+            string removeLabel = card?.RemoveActionLabel ??
+                                 (playlist.IsFromYouTubeMusic ? "Remove from App" : "Delete Playlist");
+            var removeItem = new MenuFlyoutItem
+            {
+                Text = removeLabel,
+                Icon = new FontIcon { Glyph = "\uE74D" }
+            };
+            removeItem.Click += (_, _) => ViewModel.RequestDeletePlaylistCard(playlist);
+            flyout.Items.Add(removeItem);
+        }
+
+        flyout.ShowAt(element, e.GetPosition(element));
     }
 
     private async void OnPlaylistDetailTrackTapped(object sender, TappedRoutedEventArgs e)

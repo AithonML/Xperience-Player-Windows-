@@ -263,4 +263,16 @@ public interface IMediaCatalogService
     Task<UserPlaylist> SaveSmartPlaylistToLibraryAsync(
         UserPlaylist smartPlaylist,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Imports or refreshes a playlist from the user's YouTube Music account into the local Playlists library.
+    /// Removing an imported playlist via <see cref="DeletePlaylistAsync"/> only deletes it locally from the app.
+    /// </summary>
+    Task<UserPlaylist> ImportYouTubeMusicPlaylistAsync(
+        YouTubeMusicLibraryPlaylist playlist,
+        IReadOnlyList<TrackItem> tracks,
+        string? accountLabel = null,
+        string? description = null,
+        string? coverUri = null,
+        CancellationToken cancellationToken = default);
 }

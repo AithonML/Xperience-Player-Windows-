@@ -106,7 +106,9 @@ public sealed partial class ShellViewModel
             ? (!string.IsNullOrWhiteSpace(CurrentPlaylistDetail.SmartBadgeText)
                 ? $"Suggested for You • {CurrentPlaylistDetail.SmartBadgeText}"
                 : "Suggested for You")
-            : "Playlist";
+            : (CurrentPlaylistDetail is { IsFromYouTubeMusic: true }
+                ? "YouTube Music Playlist"
+                : "Playlist");
 
     [RelayCommand]
     public void DismissFullscreenVideoError()

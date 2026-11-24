@@ -279,4 +279,19 @@ public interface IYouTubeMusicService
     Task<ResolvedMusicVideoStream?> ResolveMusicVideoStreamAsync(
         TrackItem track,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fetches the signed-in user's YouTube Music library playlists from InnerTube <c>FEmusic_liked_playlists</c>
+    /// across continuation pages. Returns an empty list if not authenticated.
+    /// </summary>
+    Task<IReadOnlyList<YouTubeMusicLibraryPlaylist>> FetchUserLibraryPlaylistsAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fetches all playable tracks (including studio ATV promotions and retained OMV/video items),
+    /// header artwork, and description for a user's YouTube Music playlist across continuation pages.
+    /// </summary>
+    Task<(IReadOnlyList<TrackItem> Tracks, string? CoverUri, string? Description)> FetchUserPlaylistTracksAsync(
+        YouTubeMusicLibraryPlaylist playlist,
+        CancellationToken cancellationToken = default);
 }
