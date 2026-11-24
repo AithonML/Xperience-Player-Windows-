@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="AppTitle.Text" xml:space="preserve"><value>Xperience Player</value></data>
+  <data name="Nav_Home.Content" xml:space="preserve"><value>Home</value></data>
+  <data name="Nav_Library.Content" xml:space="preserve"><value>Library</value></data>
+  <data name="Nav_Liked.Content" xml:space="preserve"><value>Liked</value></data>
+  <data name="Nav_Playlists.Content" xml:space="preserve"><value>Playlists</value></data>
+  <data name="Nav_Community.Content" xml:space="preserve"><value>Community</value></data>
+  <data name="Search_Placeholder.PlaceholderText" xml:space="preserve"><value>Search songs, albums, artists...</value></data>
+  <data name="SearchButton_Tooltip" xml:space="preserve"><value>Search Library &amp; Online (Ctrl+F)</value></data>
+  <data name="SettingsButton_Tooltip" xml:space="preserve"><value>Settings, Themes &amp; Liquid Glass Studio</value></data>
+  <data name="Section_SearchResults.Text" xml:space="preserve"><value>Search Results</value></data>
+  <data name="Section_Songs.Text" xml:space="preserve"><value>Songs</value></data>
+  <data name="Section_Albums.Text" xml:space="preserve"><value>Albums</value></data>
+  <data name="Section_Artists.Text" xml:space="preserve"><value>Artists</value></data>
+  <data name="Section_ArtistsYouMayLike.Text" xml:space="preserve"><value>Artists You May Like</value></data>
+  <data name="Filter_All.Content" xml:space="preserve"><value>All</value></data>
+  <data name="Filter_Songs.Content" xml:space="preserve"><value>Songs</value></data>
+  <data name="Filter_Albums.Content" xml:space="preserve"><value>Albums</value></data>
+  <data name="Filter_Artists.Content" xml:space="preserve"><value>Artists</value></data>
+  <data name="Source_Local.Content" xml:space="preserve"><value>Local</value></data>
+  <data name="Source_Online.Content" xml:space="preserve"><value>Online</value></data>
+  <data name="NowPlaying_Header.Text" xml:space="preserve"><value>Now Playing</value></data>
+  <data name="Tab_Queue.Content" xml:space="preserve"><value>Queue</value></data>
+  <data name="Tab_Lyrics.Content" xml:space="preserve"><value>Lyrics</value></data>
+  <data name="AddLocalMusic_Tooltip" xml:space="preserve"><value>Import local audio files or scan Music folder</value></data>
+  <data name="Settings_Title.Text" xml:space="preserve"><value>Experience &amp; Liquid Glass Studio</value></data>
+  <data name="Settings_Language.Text" xml:space="preserve"><value>Language &amp; Flow Direction (Hot-Reload)</value></data>
+  <data name="Settings_Theme.Text" xml:space="preserve"><value>Theme &amp; Design Token Palette</value></data>
+  <data name="Settings_Backdrop.Text" xml:space="preserve"><value>Backdrop Material &amp; GPU Mode</value></data>
+  <data name="Settings_LiquidGlass.Text" xml:space="preserve"><value>Win2D Liquid Glass Shader Controls</value></data>
+  <data name="Settings_FrostBlur.Text" xml:space="preserve"><value>Frost Blur Radius</value></data>
+  <data name="Settings_Turbulence.Text" xml:space="preserve"><value>Turbulence Frequency</value></data>
+  <data name="Settings_Distortion.Text" xml:space="preserve"><value>Refraction Distortion</value></data>
+  <data name="Settings_TintOpacity.Text" xml:space="preserve"><value>Glass Tint Opacity</value></data>
+  <data name="Settings_SpecularRim.Text" xml:space="preserve"><value>Specular Rim Intensity</value></data>
+  <data name="Settings_ImportTheme.Content" xml:space="preserve"><value>Import JSON Theme</value></data>
+  <data name="Settings_ExportTheme.Content" xml:space="preserve"><value>Export JSON Theme</value></data>
+  <data name="Settings_ResetGlass.Content" xml:space="preserve"><value>Reset Liquid Glass</value></data>
+  <data name="Settings_Close.Content" xml:space="preserve"><value>Close</value></data>
+  <data name="Settings_NavUpdates.Content" xml:space="preserve"><value>Updates</value></data>
+  <data name="Settings_UpdatesTitle.Text" xml:space="preserve"><value>Updates</value></data>
+  <data name="Settings_UpdatesSubtitle.Text" xml:space="preserve"><value>Keep Xperience Music Player up to date with official SHA-256 verified GitHub Releases.</value></data>
+  <data name="Settings_CurrentVersionLabel.Text" xml:space="preserve"><value>Installed Version</value></data>
+  <data name="Settings_CurrentVersionDesc.Text" xml:space="preserve"><value>Check if a newer release is available for your Windows device</value></data>
+  <data name="Settings_CheckUpdatesNow.Text" xml:space="preserve"><value>Check for updates now</value></data>
+  <data name="Settings_AutoCheckUpdatesTitle.Text" xml:space="preserve"><value>Check for updates automatically on startup</value></data>
+  <data name="Settings_AutoCheckUpdatesDesc.Text" xml:space="preserve"><value>Silently checks GitHub Releases in the background when the app launches</value></data>
+  <data name="Settings_UpdatesToggleOn" xml:space="preserve"><value>On</value></data>
+  <data name="Settings_UpdatesToggleOff" xml:space="preserve"><value>Off</value></data>
+  <data name="Settings_UpdatesViewAvailable.Text" xml:space="preserve"><value>View update</value></data>
+  <data name="Update_DialogTitle" xml:space="preserve"><value>New update available</value></data>
+  <data name="Update_NowButton" xml:space="preserve"><value>Update now</value></data>
+  <data name="Update_LaterButton" xml:space="preserve"><value>Later</value></data>
+  <data name="Update_ChangelogHeader" xml:space="preserve"><value>What's new in this release</value></data>
+  <data name="Update_EmptyChangelog" xml:space="preserve"><value>This release includes performance improvements, stability enhancements, and bug fixes.</value></data>
+  <data name="Update_StatusChecking" xml:space="preserve"><value>Checking for updates...</value></data>
+  <data name="Update_StatusUpToDate" xml:space="preserve"><value>You are already running the latest version ({0}).</value></data>
+  <data name="Update_StatusNoReleases" xml:space="preserve"><value>No published releases were found on GitHub yet (current: {0}).</value></data>
+  <data name="Update_StatusAvailable" xml:space="preserve"><value>Update available: {0} (installed: {1})</value></data>
+  <data name="Update_StatusCleaning" xml:space="preserve"><value>Preparing secure download...</value></data>
+  <data name="Update_StatusDownloading" xml:space="preserve"><value>Downloading update ({0:0}%)...</value></data>
+  <data name="Update_StatusDownloadingIndeterminate" xml:space="preserve"><value>Downloading update...</value></data>
+  <data name="Update_StatusVerifying" xml:space="preserve"><value>Verifying SHA-256 integrity...</value></data>
+  <data name="Update_StatusLaunching" xml:space="preserve"><value>Integrity verified. Launching installer and closing app...</value></data>
+  <data name="Update_ErrorIntegrityMismatch" xml:space="preserve"><value>SHA-256 integrity verification failed: the downloaded file did not match the official checksum and was immediately deleted for your safety.</value></data>
+  <data name="Update_ErrorMissingChecksum" xml:space="preserve"><value>Update blocked for security: no valid SHA-256 checksum was provided for this installer.</value></data>
+  <data name="Update_ErrorNoCompatibleAsset" xml:space="preserve"><value>Release {0} was found, but it does not contain a Windows installer compatible with this architecture.</value></data>
+  <data name="Update_ErrorNetwork" xml:space="preserve"><value>Could not reach GitHub Releases. Please check your internet connection and try again.</value></data>
+  <data name="Update_ErrorGeneric" xml:space="preserve"><value>Unable to check for updates: {0}</value></data>
+  <data name="Update_ErrorDownloadFailed" xml:space="preserve"><value>Failed to download the update: {0}</value></data>
+  <data name="Update_ErrorLaunchFailed" xml:space="preserve"><value>Could not launch the verified installer: {0}</value></data>
+  <data name="Update_ErrorUacCancelled" xml:space="preserve"><value>Installation was cancelled at the Windows permission (UAC) prompt.</value></data>
+</root>

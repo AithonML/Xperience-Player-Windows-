@@ -1,0 +1,24 @@
+<UserControl
+    x:Class="Xperience.App.Controls.MiniPlayerProgressBorderControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid x:Name="HostGrid"
+          Background="Transparent">
+        <!-- Inner Mini Player content (e.g. LiquidGlassPanel) scales in lockstep with the border -->
+        <ContentPresenter x:Name="ContentHost"
+                          HorizontalContentAlignment="Stretch"
+                          VerticalContentAlignment="Stretch"
+                          Content="{x:Bind InnerContent, Mode=OneWay}" />
+
+        <!-- Unclipped Win2D GPU overlay for perimeter progress glow, loading sweep & scrub thumb -->
+        <canvas:CanvasControl x:Name="PerimeterCanvas"
+                              Margin="-16"
+                              ClearColor="Transparent"
+                              IsHitTestVisible="False" />
+    </Grid>
+</UserControl>

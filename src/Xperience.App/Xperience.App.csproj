@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Xperience.App</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <ApplicationIcon>Assets\Branding\xperience_icon_round.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseRidGraph>true</UseRidGraph>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Xperience.Core\Xperience.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.260224002" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+    <Manifest Include="$(ApplicationManifest)" />
+    <PackageReference Include="YoutubeExplode" Version="6.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Compile Liquid Glass HLSL Shaders (.hlsl -> Assets\Shaders\*.cso) when fxc.exe is available -->
+  <Target Name="CompileLiquidGlassHlslShaders" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <FxcCompilerPath Condition="Exists('C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\fxc.exe')">C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\fxc.exe</FxcCompilerPath>
+    </PropertyGroup>
+    <Exec Condition="'$(FxcCompilerPath)' != '' And Exists('Shaders\LiquidGlassBlurHorizontal.hlsl')"
+          Command="&quot;$(FxcCompilerPath)&quot; /nologo /T ps_4_0 /E main /O3 /Fo &quot;Assets\Shaders\LiquidGlassBlurHorizontal.cso&quot; &quot;Shaders\LiquidGlassBlurHorizontal.hlsl&quot;" />
+    <Exec Condition="'$(FxcCompilerPath)' != '' And Exists('Shaders\LiquidGlassBlurVertical.hlsl')"
+          Command="&quot;$(FxcCompilerPath)&quot; /nologo /T ps_4_0 /E main /O3 /Fo &quot;Assets\Shaders\LiquidGlassBlurVertical.cso&quot; &quot;Shaders\LiquidGlassBlurVertical.hlsl&quot;" />
+    <Exec Condition="'$(FxcCompilerPath)' != '' And Exists('Shaders\LiquidGlassPostProcess.hlsl')"
+          Command="&quot;$(FxcCompilerPath)&quot; /nologo /T ps_4_0 /E main /O3 /Fo &quot;Assets\Shaders\LiquidGlassPostProcess.cso&quot; &quot;Shaders\LiquidGlassPostProcess.hlsl&quot;" />
+    <Exec Condition="'$(FxcCompilerPath)' != '' And Exists('Shaders\LiquidGlassMain.hlsl')"
+          Command="&quot;$(FxcCompilerPath)&quot; /nologo /T ps_4_0 /E main /O3 /Fo &quot;Assets\Shaders\LiquidGlassMain.cso&quot; &quot;Shaders\LiquidGlassMain.hlsl&quot;" />
+  </Target>
+
+  <!-- Copy raw .resw files to output directory for zero-restart runtime hot-reload localization -->
+  <Target Name="CopyReswFilesForRuntimeHotReload" AfterTargets="Build">
+    <ItemGroup>
+      <ReswHotReloadFiles Include="Strings\**\*.resw" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ReswHotReloadFiles)" DestinationFiles="@(ReswHotReloadFiles->'$(OutDir)Strings\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
