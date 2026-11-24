@@ -110,6 +110,14 @@ public static partial class WindowsReleaseAssetSelector
         return false;
     }
 
+    private static readonly HashSet<string> AllowedGitHubUpdateExactHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com"
+    };
+
     /// <summary>
     /// Validates that <paramref name="url"/> is a well-formed absolute <c>https://</c> URI.
     /// </summary>
@@ -118,7 +126,46 @@ public static partial class WindowsReleaseAssetSelector
         return !string.IsNullOrWhiteSpace(url) &&
                Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
                string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
-               !string.IsNullOrWhiteSpace(uri.Host);
+               !string.IsNullOrWhiteSpace(uri.Host) &&
+               string.IsNullOrEmpty(uri.UserInfo);
+    }
+
+    /// <summary>
+    /// Validates whether <paramref name="host"/> is an allowlisted GitHub Releases or GitHub release asset CDN host.
+    /// </summary>
+    public static bool IsAllowedGitHubUpdateHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        string cleanHost = host.Trim();
+        if (cleanHost.EndsWith('.'))
+        {
+            return false;
+        }
+
+        if (AllowedGitHubUpdateExactHosts.Contains(cleanHost))
+        {
+            return true;
+        }
+
+        const string ghUserContentSuffix = ".githubusercontent.com";
+        return cleanHost.Length > ghUserContentSuffix.Length &&
+               cleanHost.EndsWith(ghUserContentSuffix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="url"/> is an <c>https://</c> URI targeting an allowlisted GitHub update host.
+    /// </summary>
+    public static bool IsAllowedGitHubUpdateUrl(string? url)
+    {
+        return !string.IsNullOrWhiteSpace(url) &&
+               Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+               string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+               string.IsNullOrEmpty(uri.UserInfo) &&
+               IsAllowedGitHubUpdateHost(uri.IdnHost);
     }
 
     internal static HashSet<Architecture> DetectArchitectures(string assetName)
@@ -170,7 +217,7 @@ public static partial class WindowsReleaseAssetSelector
         extension = string.Empty;
         if (asset is null ||
             string.IsNullOrWhiteSpace(asset.Name) ||
-            !IsValidHttpsUrl(asset.BrowserDownloadUrl))
+            !IsAllowedGitHubUpdateUrl(asset.BrowserDownloadUrl))
         {
             return false;
         }

@@ -12,6 +12,7 @@ using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
 using Xperience.Core.Playback;
+using Xperience.Core.Services;
 
 namespace Xperience.App.ViewModels;
 
@@ -6076,6 +6077,14 @@ public sealed partial class ShellViewModel : ObservableObject
                 return;
             }
 
+            const long maxVisualizerFileBytes = 1024 * 1024;
+            var pickedFileInfo = new FileInfo(pickedFile.Path);
+            if (!pickedFileInfo.Exists || pickedFileInfo.Length > maxVisualizerFileBytes)
+            {
+                StatusMessage = "Visualizer file exceeds the 1 MB maximum size limit.";
+                return;
+            }
+
             var imported = await _storageService.ImportJsonFileAsync<VisualizerDefinition>(pickedFile.Path);
             if (imported is null || string.IsNullOrWhiteSpace(imported.Name))
             {
@@ -6083,11 +6092,10 @@ public sealed partial class ShellViewModel : ObservableObject
                 return;
             }
 
+            string sanitizedId = YouTubeSecurityPolicy.SanitizeVisualizerFileId(imported.Id);
             var normalized = imported with
             {
-                Id = string.IsNullOrWhiteSpace(imported.Id)
-                    ? $"custom_{Path.GetFileNameWithoutExtension(pickedFile.Name)}_{Guid.NewGuid():N}"
-                    : imported.Id,
+                Id = sanitizedId,
                 IsCustomImported = true,
                 GridResolution = Math.Clamp(imported.GridResolution, 16, 96),
                 WaveLayers = Math.Clamp(imported.WaveLayers, 2, 14),
@@ -6102,7 +6110,7 @@ public sealed partial class ShellViewModel : ObservableObject
                 "Visualizers");
             Directory.CreateDirectory(customDir);
 
-            string safeFileName = string.Concat(normalized.Id.Split(Path.GetInvalidFileNameChars())) + ".xviz.json";
+            string safeFileName = sanitizedId + ".xviz.json";
             await _storageService.ExportJsonFileAsync(Path.Combine(customDir, safeFileName), normalized);
 
             var existingIndex = AvailableVisualizers.ToList()
@@ -6953,6 +6961,9 @@ public sealed partial class ShellViewModel : ObservableObject
     private async Task DisconnectYouTubeMusicAccountAsync()
     {
         await _youTubeMusicService.DisconnectAccountAsync();
+        YouTubeMusicCookieHeaderInput = string.Empty;
+        YouTubeAccountLabelInput = string.Empty;
+        YouTubeLibraryImportItems.Clear();
         SyncYouTubeMusicAccountStatus();
         StatusMessage = "Disconnected YouTube Music account.";
         await RefreshHomeDiscoveryFeedAsync();

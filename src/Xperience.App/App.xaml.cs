@@ -112,9 +112,21 @@ public partial class App : Application
         services.AddSingleton<IAppUpdateService>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<GitHubAppUpdateService>>();
+            string updatesDir = GitHubAppUpdateService.GetDefaultUpdatesDirectory();
+            try
+            {
+                System.IO.Directory.CreateDirectory(updatesDir);
+                WindowsAccountSessionStore.ApplyUserOnlyDirectoryAcl(updatesDir);
+            }
+            catch
+            {
+                // Best-effort directory ACL hardening
+            }
+
             return new GitHubAppUpdateService(
                 currentVersion: WindowsInstallerLauncher.GetCompiledAppVersion(),
                 log: msg => logger.LogInformation("{UpdateMessage}", msg),
+                updatesDirectory: updatesDir,
                 isPackagedApp: WindowsInstallerLauncher.IsPackagedIdentity());
         });
 
@@ -134,8 +146,18 @@ public partial class App : Application
             {
                 var logDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XperienceMusicPlayer");
                 System.IO.Directory.CreateDirectory(logDir);
-                System.IO.File.AppendAllText(System.IO.Path.Combine(logDir, "crash.log"),
-                    $"[{DateTime.Now:O}] UI Exception: {e.Message}\r\n{e.Exception}\r\n\r\n");
+                var crashLogPath = System.IO.Path.Combine(logDir, "crash.log");
+                string entry = $"[{DateTime.Now:O}] UI Exception: {e.Message}\r\n{e.Exception}\r\n\r\n";
+                const long maxCrashLogBytes = 512 * 1024;
+                if (System.IO.File.Exists(crashLogPath) &&
+                    new System.IO.FileInfo(crashLogPath).Length >= maxCrashLogBytes)
+                {
+                    System.IO.File.WriteAllText(crashLogPath, entry);
+                }
+                else
+                {
+                    System.IO.File.AppendAllText(crashLogPath, entry);
+                }
             }
             catch { }
             e.Handled = true;

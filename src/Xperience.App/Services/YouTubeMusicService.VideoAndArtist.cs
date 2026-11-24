@@ -8,6 +8,7 @@ using Xperience.Core.Collections;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 using YoutubeExplode.Videos.Streams;
 
 namespace Xperience.App.Services;
@@ -1446,9 +1447,10 @@ public sealed partial class YouTubeMusicService
 
                 var (progressiveCandidate, adaptiveCandidate) = PickBestVideoMp4Candidates(streamingData);
 
-                string? downloadCookie = spec.SendOriginOnDownload
+                string? rawDownloadCookie = spec.SendOriginOnDownload
                     ? (useAuth && IsAuthenticated ? YouTubeAuthHelper.EnsureConsentCookie(_cookieHeader) : anonCookies)
                     : null;
+                string? downloadCookie = YouTubeSecurityPolicy.StripAuthCookiesForCdn(rawDownloadCookie);
 
                 async Task<ResolvedAudioStream?> MaterializeCandidateAsync(AudioFormatCandidate? cand)
                 {
@@ -1462,7 +1464,8 @@ public sealed partial class YouTubeMusicService
                         ? await _scriptResolver.TransformStreamUrlAsync(cand.Url, cand.Sp, cand.Signature, cancellationToken).ConfigureAwait(false)
                         : cand.Url;
 
-                    if (string.IsNullOrWhiteSpace(resolvedUrl))
+                    if (string.IsNullOrWhiteSpace(resolvedUrl) ||
+                        !YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(resolvedUrl))
                     {
                         return null;
                     }
