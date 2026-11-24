@@ -2982,6 +2982,9 @@ public sealed partial class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(CurrentPlaylistSavedBadgeVisibility));
         OnPropertyChanged(nameof(CurrentPlaylistDeleteButtonVisibility));
         OnPropertyChanged(nameof(CurrentPlaylistTypeAccentLabel));
+        OnPropertyChanged(nameof(CurrentPlaylistYouTubeBadgeVisibility));
+        OnPropertyChanged(nameof(CurrentPlaylistRefreshButtonVisibility));
+        OnPropertyChanged(nameof(CurrentPlaylistDeleteButtonTooltip));
     }
 
     [RelayCommand]
@@ -6341,6 +6344,7 @@ public sealed partial class ShellViewModel : ObservableObject
         IsYouTubeMusicAuthenticated = _youTubeMusicService.IsAuthenticated;
         YouTubeMusicAccountStatusText = _youTubeMusicService.ConnectedAccountLabel;
         OnPropertyChanged(nameof(HomeYtmLoginPromptVisibility));
+        OnPropertyChanged(nameof(CurrentPlaylistRefreshButtonVisibility));
     }
 
     private sealed class YtmPromptDismissState
@@ -6877,6 +6881,9 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
+        bool wasAuthenticated = _youTubeMusicService.IsAuthenticated;
+        string previousAccount = _youTubeMusicService.ConnectedAccountLabel;
+
         string? label = string.IsNullOrWhiteSpace(YouTubeAccountLabelInput) ||
                         string.Equals(YouTubeAccountLabelInput.Trim(), "My YouTube Music", StringComparison.OrdinalIgnoreCase)
             ? null
@@ -6893,6 +6900,13 @@ public sealed partial class ShellViewModel : ObservableObject
 
         if (_youTubeMusicService.IsAuthenticated)
         {
+            bool newlySignedIn = !wasAuthenticated ||
+                                 !string.Equals(previousAccount, _youTubeMusicService.ConnectedAccountLabel, StringComparison.OrdinalIgnoreCase);
+            if (newlySignedIn && !IsYouTubePlaylistImportModalOpen)
+            {
+                _ = OpenYouTubePlaylistImportModalAsync();
+            }
+
             await RefreshHomeDiscoveryFeedAsync();
         }
     }
@@ -6906,6 +6920,9 @@ public sealed partial class ShellViewModel : ObservableObject
         {
             return;
         }
+
+        bool wasAuthenticated = _youTubeMusicService.IsAuthenticated;
+        string previousAccount = _youTubeMusicService.ConnectedAccountLabel;
 
         await _youTubeMusicService.ConnectAccountCookieAsync(
             cookieHeader,
@@ -6921,6 +6938,13 @@ public sealed partial class ShellViewModel : ObservableObject
 
         if (_youTubeMusicService.IsAuthenticated)
         {
+            bool newlySignedIn = !wasAuthenticated ||
+                                 !string.Equals(previousAccount, _youTubeMusicService.ConnectedAccountLabel, StringComparison.OrdinalIgnoreCase);
+            if (newlySignedIn && !IsYouTubePlaylistImportModalOpen)
+            {
+                _ = OpenYouTubePlaylistImportModalAsync();
+            }
+
             await RefreshHomeDiscoveryFeedAsync();
         }
     }
@@ -7144,6 +7168,9 @@ public sealed partial class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(CurrentPlaylistSavedBadgeVisibility));
         OnPropertyChanged(nameof(CurrentPlaylistDeleteButtonVisibility));
         OnPropertyChanged(nameof(CurrentPlaylistTypeAccentLabel));
+        OnPropertyChanged(nameof(CurrentPlaylistYouTubeBadgeVisibility));
+        OnPropertyChanged(nameof(CurrentPlaylistRefreshButtonVisibility));
+        OnPropertyChanged(nameof(CurrentPlaylistDeleteButtonTooltip));
 
         CancelAndDisposeCts(ref _artistDetailLoadCts);
         CancelAndDisposeCts(ref _albumDetailLoadCts);
@@ -9329,6 +9356,14 @@ public sealed class PlaylistCardViewModel
     public bool HasTracks => Playlist.Tracks.Count > 0;
 
     public bool IsSmartSuggestion => Playlist.IsSmartSuggestion;
+
+    public bool IsFromYouTubeMusic => Playlist.IsFromYouTubeMusic;
+
+    public Visibility YouTubeMusicBadgeVisibility =>
+        IsFromYouTubeMusic ? Visibility.Visible : Visibility.Collapsed;
+
+    public string RemoveActionLabel =>
+        IsFromYouTubeMusic ? "Remove from App" : "Delete Playlist";
 
     public string SmartBadgeText => !string.IsNullOrWhiteSpace(Playlist.SmartBadgeText)
         ? Playlist.SmartBadgeText
