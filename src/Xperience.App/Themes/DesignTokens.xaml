@@ -1,0 +1,136 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ========================================================================= -->
+    <!-- LAYER 1: PRIMITIVE COLOR TOKENS (Dynamically replaceable via ThemeService) -->
+    <!-- ========================================================================= -->
+    <Color x:Key="TokenAppBackgroundColor">#FF111215</Color>
+    <Color x:Key="TokenSurfaceBackgroundColor">#6823262C</Color>
+    <Color x:Key="TokenElevatedSurfaceColor">#882C3038</Color>
+    <Color x:Key="TokenPrimaryAccentColor">#FF2DD4BF</Color>
+    <Color x:Key="TokenSecondaryAccentColor">#FF38BDF8</Color>
+    <Color x:Key="TokenTealButtonColor">#FF2B7A75</Color>
+    <Color x:Key="TokenPrimaryTextColor">#FFFFFFFF</Color>
+    <Color x:Key="TokenSecondaryTextColor">#FFB0B6C2</Color>
+    <Color x:Key="TokenGlassBorderColor">#4CFFFFFF</Color>
+
+    <!-- ========================================================================= -->
+    <!-- LAYER 2: SEMANTIC BRUSH TOKENS                                            -->
+    <!-- ========================================================================= -->
+    <SolidColorBrush x:Key="TokenAppBackgroundBrush" Color="{StaticResource TokenAppBackgroundColor}" />
+    <SolidColorBrush x:Key="TokenSurfaceBackgroundBrush" Color="{StaticResource TokenSurfaceBackgroundColor}" />
+    <SolidColorBrush x:Key="TokenElevatedSurfaceBrush" Color="{StaticResource TokenElevatedSurfaceColor}" />
+    <SolidColorBrush x:Key="TokenPrimaryAccentBrush" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="TokenSecondaryAccentBrush" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="TokenTealActionBrush" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="TokenNowPlayingOverlayBrush" Color="#B8244A4C" />
+    <SolidColorBrush x:Key="TokenNowPlayingPlayButtonBrush" Color="#A6588582" />
+    <SolidColorBrush x:Key="TokenAccentBadgeBackgroundBrush" Color="#362DD4BF" />
+    <SolidColorBrush x:Key="TokenAccentBadgeBorderBrush" Color="#8C2DD4BF" />
+    <SolidColorBrush x:Key="TokenPrimaryTextBrush" Color="{StaticResource TokenPrimaryTextColor}" />
+    <SolidColorBrush x:Key="TokenSecondaryTextBrush" Color="{StaticResource TokenSecondaryTextColor}" />
+    <SolidColorBrush x:Key="TokenGlassBorderBrush" Color="{StaticResource TokenGlassBorderColor}" />
+    <SolidColorBrush x:Key="TokenSurfaceBorderBrush" Color="{StaticResource TokenGlassBorderColor}" />
+    <SolidColorBrush x:Key="TokenBrandPillBackgroundBrush" Color="#DC0B0C0E" />
+    <SolidColorBrush x:Key="TokenActiveSegmentBackgroundBrush" Color="#36FFFFFF" />
+    <SolidColorBrush x:Key="TokenActiveSegmentBorderBrush" Color="#55FFFFFF" />
+
+    <LinearGradientBrush x:Key="TokenVignetteMaskBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Offset="0.0" Color="#00181A1E" />
+        <GradientStop Offset="1.0" Color="#E6181A1E" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="TokenBrandIconGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Offset="0.0" Color="#FFFF5E7E" />
+        <GradientStop Offset="0.5" Color="#FFFF7556" />
+        <GradientStop Offset="1.0" Color="#FFFFA07A" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="TokenBrandUnderlineBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Offset="0.0" Color="#FF6366F1" />
+        <GradientStop Offset="0.5" Color="#FFA855F7" />
+        <GradientStop Offset="1.0" Color="#FFEC4899" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="TokenProgressBarGradientBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Offset="0.0" Color="#FF2DD4BF" />
+        <GradientStop Offset="1.0" Color="#FF5EEAD4" />
+    </LinearGradientBrush>
+
+    <!-- ========================================================================= -->
+    <!-- LAYER 3: GEOMETRY, RADIUS & SPACING TOKENS                                -->
+    <!-- ========================================================================= -->
+    <CornerRadius x:Key="TokenCapsuleCornerRadius">26</CornerRadius>
+    <CornerRadius x:Key="TokenPanelCornerRadius">28</CornerRadius>
+    <CornerRadius x:Key="TokenCardCornerRadius">24</CornerRadius>
+    <CornerRadius x:Key="TokenQueueThumbCornerRadius">10</CornerRadius>
+    <Thickness x:Key="TokenGlassStrokeThickness">1</Thickness>
+
+    <!-- ========================================================================= -->
+    <!-- LAYER 4: TYPOGRAPHY TOKENS (Google Sans Titles + Plus Jakarta Sans Body)  -->
+    <!-- ========================================================================= -->
+    <FontFamily x:Key="TokenHeadingFontFamily">ms-appx:///Assets/Fonts/GoogleSans-Bold.ttf#Google Sans, ms-appx:///Assets/Fonts/GoogleSans-Regular.ttf#Google Sans</FontFamily>
+    <FontFamily x:Key="TokenSubheadingFontFamily">ms-appx:///Assets/Fonts/GoogleSans-Medium.ttf#Google Sans Medium, ms-appx:///Assets/Fonts/GoogleSans-Regular.ttf#Google Sans</FontFamily>
+    <FontFamily x:Key="TokenBodyFontFamily">ms-appx:///Assets/Fonts/PlusJakartaSans.ttf#Plus Jakarta Sans</FontFamily>
+    <FontFamily x:Key="ContentControlThemeFontFamily">ms-appx:///Assets/Fonts/PlusJakartaSans.ttf#Plus Jakarta Sans</FontFamily>
+
+    <!-- ========================================================================= -->
+    <!-- LAYER 5: WINUI 3 NATIVE CONTROL ACCENT OVERRIDES (DYNAMIC ALBUM ACCENT)   -->
+    <!-- ========================================================================= -->
+    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="{StaticResource TokenTealButtonColor}" />
+
+    <!-- Native ToggleSwitch ("On" pill fill adopts Dynamic Album Cover Accent) -->
+    <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed" Color="#FFFFFFFF" />
+
+    <!-- Native AccentButtonStyle -->
+    <SolidColorBrush x:Key="AccentButtonBackground" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#F0FFFFFF" />
+
+    <!-- Native CheckBox & RadioButton -->
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillChecked" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPressed" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeChecked" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="RadioButtonOuterEllipseCheckedFill" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="RadioButtonOuterEllipseCheckedPointerOverFill" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="RadioButtonOuterEllipseCheckedPressedFill" Color="{StaticResource TokenTealButtonColor}" />
+    <SolidColorBrush x:Key="RadioButtonOuterEllipseCheckedStroke" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="RadioButtonOuterEllipseCheckedPointerOverStroke" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="RadioButtonOuterEllipseCheckedPressedStroke" Color="{StaticResource TokenTealButtonColor}" />
+
+    <!-- Native NavigationView Selection Pill, Slider & TextBox Focus -->
+    <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="SliderTrackValueFill" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="SliderThumbBackground" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="{StaticResource TokenPrimaryAccentColor}" />
+    <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="{StaticResource TokenSecondaryAccentColor}" />
+    <SolidColorBrush x:Key="SliderTrackFill" Color="#38FFFFFF" />
+    <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#50FFFFFF" />
+
+</ResourceDictionary>

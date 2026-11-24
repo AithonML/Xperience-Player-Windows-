@@ -1,0 +1,95 @@
+<UserControl
+    x:Class="Xperience.App.Controls.SleepTimerBadgeControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:Xperience.App.Controls"
+    xmlns:helpers="using:Xperience.App.Helpers"
+    mc:Ignorable="d">
+
+    <Grid x:Name="RootBadgeGrid"
+          Visibility="Collapsed"
+          Height="36"
+          VerticalAlignment="Center">
+        <controls:LiquidGlassPanel Height="36"
+                                   GlassCornerRadius="18"
+                                   GlassPadding="0"
+                                   SampleLiveBackdrop="True">
+            <Border x:Name="BadgeSurfaceBorder"
+                    CornerRadius="18"
+                    BorderThickness="1.2"
+                    BorderBrush="#6638BDF8"
+                    Background="#280284C7"
+                    Padding="4,0">
+                <StackPanel Orientation="Horizontal"
+                            Spacing="4"
+                            VerticalAlignment="Center">
+                    <!-- Main Clickable Countdown Pill Area (Opens Sleep Timer Tab in DSP Panel) -->
+                    <Button Click="OnMainBadgeButtonClicked"
+                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                            Height="30"
+                            CornerRadius="15"
+                            Padding="10,0"
+                            helpers:MicroInteractions.HoverScale="1.05"
+                            helpers:MicroInteractions.PressScale="0.95"
+                            ToolTipService.ToolTip="Active sleep timer (click to configure)">
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="6"
+                                    VerticalAlignment="Center">
+                            <Border x:Name="PulseIndicatorDot"
+                                    Width="7" Height="7"
+                                    CornerRadius="3.5"
+                                    Background="#FF38BDF8"
+                                    VerticalAlignment="Center" />
+                            <FontIcon Glyph="&#xE916;"
+                                      FontSize="12.5"
+                                      Foreground="#FF7DD3FC"
+                                      VerticalAlignment="Center" />
+                            <TextBlock x:Name="CountdownTextBlock"
+                                       Text="15:00"
+                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFFFFFF"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Quick +5m Extend Button -->
+                    <Button x:Name="Extend5MinButton"
+                            Click="OnExtend5MinButtonClicked"
+                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                            Height="24"
+                            CornerRadius="12"
+                            Padding="7,0"
+                            Background="#24FFFFFF"
+                            helpers:MicroInteractions.HoverScale="1.08"
+                            helpers:MicroInteractions.PressScale="0.92"
+                            ToolTipService.ToolTip="Add 5 minutes to sleep timer">
+                        <TextBlock Text="+5m"
+                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="#FFE0F2FE"
+                                   VerticalAlignment="Center" />
+                    </Button>
+
+                    <!-- Quick Cancel Button -->
+                    <Button Click="OnCancelTimerButtonClicked"
+                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                            Width="24" Height="24"
+                            CornerRadius="12"
+                            Padding="0"
+                            helpers:MicroInteractions.HoverScale="1.12"
+                            helpers:MicroInteractions.PressScale="0.90"
+                            ToolTipService.ToolTip="Cancel sleep timer">
+                        <FontIcon Glyph="&#xE711;"
+                                  FontSize="9.5"
+                                  Foreground="#CCFFFFFF" />
+                    </Button>
+                </StackPanel>
+            </Border>
+        </controls:LiquidGlassPanel>
+    </Grid>
+</UserControl>

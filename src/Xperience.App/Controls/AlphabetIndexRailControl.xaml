@@ -1,0 +1,94 @@
+<UserControl
+    x:Class="Xperience.App.Controls.AlphabetIndexRailControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Xperience.App.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid x:Name="RootOverlay"
+          HorizontalAlignment="Right"
+          VerticalAlignment="Stretch">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Floating Drag Preview Bubble (Android WaveAlphabetScrubber 62x62dp, Tinted LiquidGlass) -->
+        <Grid Grid.Column="0"
+              Width="84"
+              IsHitTestVisible="False">
+            <Grid x:Name="DragBubbleHost"
+                  Width="62"
+                  Height="62"
+                  HorizontalAlignment="Left"
+                  VerticalAlignment="Top"
+                  Visibility="Collapsed"
+                  Opacity="0">
+                <Grid.OpacityTransition>
+                    <ScalarTransition Duration="0:0:0.12" />
+                </Grid.OpacityTransition>
+                <controls:LiquidGlassPanel x:Name="DragBubble"
+                                           Width="62"
+                                           Height="62"
+                                           Visibility="Collapsed"
+                                           GlassCornerRadius="20"
+                                           Preset="Button"
+                                           SampleLiveBackdrop="True"
+                                           UseAccentTint="True"
+                                           TintOpacityOverride="0.34"
+                                           HighlightAlphaMultiplier="0.82"
+                                           EnablePointerLighting="False">
+                    <Grid>
+                        <Border CornerRadius="20"
+                                BorderBrush="{ThemeResource TokenAccentBadgeBorderBrush}"
+                                BorderThickness="1"
+                                Opacity="0.65"
+                                IsHitTestVisible="False" />
+                        <TextBlock x:Name="DragBubbleText"
+                                   Text="A"
+                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                   FontSize="26"
+                                   FontWeight="ExtraBold"
+                                   Foreground="White"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </controls:LiquidGlassPanel>
+            </Grid>
+        </Grid>
+
+        <!-- Vertical A-Z + # Rail: Sibling LiquidGlass Capsule + Unclipped Wave Letters Overlay -->
+        <Grid x:Name="RailHost"
+              Grid.Column="1"
+              Width="30"
+              MaxHeight="504"
+              VerticalAlignment="Center">
+            <!-- LiquidGlass Pill Backdrop (Sibling so letters can freely overflow past the pill edge) -->
+            <controls:LiquidGlassPanel x:Name="RailPillGlass"
+                                       Width="30"
+                                       HorizontalAlignment="Stretch"
+                                       VerticalAlignment="Stretch"
+                                       GlassCornerRadius="15"
+                                       Preset="Panel"
+                                       SampleLiveBackdrop="True"
+                                       HighlightAlphaMultiplier="0.65"
+                                       EnablePointerLighting="False"
+                                       IsHitTestVisible="False" />
+
+            <!-- Unclipped Letters & Pointer Capture Strip -->
+            <Grid x:Name="LettersGrid"
+                  Width="30"
+                  Padding="2,6"
+                  HorizontalAlignment="Stretch"
+                  VerticalAlignment="Stretch"
+                  Background="Transparent"
+                  PointerPressed="OnRailPointerPressed"
+                  PointerMoved="OnRailPointerMoved"
+                  PointerReleased="OnRailPointerReleased"
+                  PointerCanceled="OnRailPointerCanceled"
+                  PointerCaptureLost="OnRailPointerCaptureLost" />
+        </Grid>
+    </Grid>
+</UserControl>

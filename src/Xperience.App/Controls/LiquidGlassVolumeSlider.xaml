@@ -1,0 +1,115 @@
+<UserControl
+    x:Class="Xperience.App.Controls.LiquidGlassVolumeSlider"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Xperience.App.Controls"
+    Height="32"
+    MinWidth="16"
+    Background="Transparent"
+    ManipulationMode="None">
+
+    <Grid x:Name="RootSliderGrid"
+          Background="#01000000"
+          VerticalAlignment="Stretch"
+          HorizontalAlignment="Stretch">
+
+        <!-- 1. Liquid Glass Volume Track Capsule -->
+        <controls:LiquidGlassPanel x:Name="TrackGlassCapsule"
+                                   Height="10"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Stretch"
+                                   Margin="8,0,8,0"
+                                   GlassCornerRadius="5"
+                                   GlassPadding="1.5"
+                                   SampleLiveBackdrop="False"
+                                   IsHitTestVisible="False">
+            <Grid>
+                <!-- Subtle Track Groove -->
+                <Border CornerRadius="3.5"
+                        Background="#28FFFFFF" />
+
+                <!-- Dynamic Accent Volume Fill Bar -->
+                <Border x:Name="VolumeFillBar"
+                        CornerRadius="3.5"
+                        HorizontalAlignment="Left"
+                        Width="40"
+                        Background="{ThemeResource TokenProgressBarGradientBrush}" />
+            </Grid>
+        </controls:LiquidGlassPanel>
+
+        <!-- 2. Hold-to-Morph Volume Pointer / Thumb (Solid Circle at rest -> Grows & Morphs into LiquidGlass Lens while held) -->
+        <Grid x:Name="ThumbContainer"
+              Width="32"
+              Height="24"
+              HorizontalAlignment="Left"
+              VerticalAlignment="Center"
+              IsHitTestVisible="False"
+              CenterPoint="16,12,0"
+              Scale="1,1,1"
+              Translation="0,0,0">
+            <Grid.ScaleTransition>
+                <Vector3Transition Duration="0:0:0.20" />
+            </Grid.ScaleTransition>
+
+            <!-- Normal Resting State: Crisp Solid Circular Thumb -->
+            <Border x:Name="RestingSolidThumb"
+                    Width="14"
+                    Height="14"
+                    CornerRadius="7"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="White"
+                    BorderBrush="{ThemeResource TokenPrimaryAccentBrush}"
+                    BorderThickness="2.5"
+                    Opacity="1"
+                    CenterPoint="7,7,0"
+                    Scale="1,1,1">
+                <Border.OpacityTransition>
+                    <ScalarTransition Duration="0:0:0.18" />
+                </Border.OpacityTransition>
+                <Border.ScaleTransition>
+                    <Vector3Transition Duration="0:0:0.18" />
+                </Border.ScaleTransition>
+            </Border>
+
+            <!-- Held / Dragging State: Expanded Optical LiquidGlass Lens Orb -->
+            <Grid x:Name="HeldLiquidGlassThumb"
+                  Width="30"
+                  Height="22"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Visibility="Collapsed"
+                  Opacity="0"
+                  CenterPoint="15,11,0"
+                  Scale="0.52,0.52,1">
+                <Grid.OpacityTransition>
+                    <ScalarTransition Duration="0:0:0.18" />
+                </Grid.OpacityTransition>
+                <Grid.ScaleTransition>
+                    <Vector3Transition Duration="0:0:0.22" />
+                </Grid.ScaleTransition>
+
+                <controls:LiquidGlassPanel x:Name="HeldThumbGlassPanel"
+                                           Width="30"
+                                           Height="22"
+                                           Visibility="Collapsed"
+                                           GlassCornerRadius="11"
+                                           SampleLiveBackdrop="True"
+                                           IsDraggableLens="True">
+                    <Border CornerRadius="10"
+                            BorderBrush="{ThemeResource TokenPrimaryAccentBrush}"
+                            BorderThickness="1"
+                            Background="#14FFFFFF">
+                        <Border Width="5"
+                                Height="5"
+                                CornerRadius="2.5"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Background="{ThemeResource TokenPrimaryAccentBrush}"
+                                Opacity="0.65" />
+                    </Border>
+                </controls:LiquidGlassPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

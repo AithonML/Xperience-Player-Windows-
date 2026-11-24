@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="AppTitle.Text" xml:space="preserve"><value>Xperience Player</value></data>
+  <data name="Nav_Home.Content" xml:space="preserve"><value>الرئيسية</value></data>
+  <data name="Nav_Library.Content" xml:space="preserve"><value>المكتبة</value></data>
+  <data name="Nav_Liked.Content" xml:space="preserve"><value>المفضلة</value></data>
+  <data name="Nav_Playlists.Content" xml:space="preserve"><value>قوائم التشغيل</value></data>
+  <data name="Nav_Community.Content" xml:space="preserve"><value>المجتمع</value></data>
+  <data name="Search_Placeholder.PlaceholderText" xml:space="preserve"><value>ابحث عن الأغاني والألبومات والفنانين...</value></data>
+  <data name="SearchButton_Tooltip" xml:space="preserve"><value>البحث في المكتبة وعبر الإنترنت (Ctrl+F)</value></data>
+  <data name="SettingsButton_Tooltip" xml:space="preserve"><value>الإعدادات والسمات واستوديو الزجاج السائل</value></data>
+  <data name="Section_SearchResults.Text" xml:space="preserve"><value>نتائج البحث</value></data>
+  <data name="Section_Songs.Text" xml:space="preserve"><value>الأغاني</value></data>
+  <data name="Section_Albums.Text" xml:space="preserve"><value>الألبومات</value></data>
+  <data name="Section_Artists.Text" xml:space="preserve"><value>الفنانون</value></data>
+  <data name="Section_ArtistsYouMayLike.Text" xml:space="preserve"><value>فنانون قد يعجبونك</value></data>
+  <data name="Filter_All.Content" xml:space="preserve"><value>الكل</value></data>
+  <data name="Filter_Songs.Content" xml:space="preserve"><value>الأغاني</value></data>
+  <data name="Filter_Albums.Content" xml:space="preserve"><value>الألبومات</value></data>
+  <data name="Filter_Artists.Content" xml:space="preserve"><value>الفنانون</value></data>
+  <data name="Source_Local.Content" xml:space="preserve"><value>محلي</value></data>
+  <data name="Source_Online.Content" xml:space="preserve"><value>عبر الإنترنت</value></data>
+  <data name="NowPlaying_Header.Text" xml:space="preserve"><value>قيد التشغيل الآن</value></data>
+  <data name="Tab_Queue.Content" xml:space="preserve"><value>قائمة الانتظار</value></data>
+  <data name="Tab_Lyrics.Content" xml:space="preserve"><value>كلمات الأغنية</value></data>
+  <data name="AddLocalMusic_Tooltip" xml:space="preserve"><value>استيراد ملفات صوتية محلية</value></data>
+  <data name="Settings_Title.Text" xml:space="preserve"><value>استوديو التجربة والزجاج السائل</value></data>
+  <data name="Settings_Language.Text" xml:space="preserve"><value>اللغة واتجاه الواجهة (تغيير فوري)</value></data>
+  <data name="Settings_Theme.Text" xml:space="preserve"><value>السمة ولوحة الألوان</value></data>
+  <data name="Settings_Backdrop.Text" xml:space="preserve"><value>مادة الخلفية والأداء</value></data>
+  <data name="Settings_LiquidGlass.Text" xml:space="preserve"><value>إعدادات الزجاج السائل Win2D</value></data>
+  <data name="Settings_FrostBlur.Text" xml:space="preserve"><value>نصف قطر الضبابية</value></data>
+  <data name="Settings_Turbulence.Text" xml:space="preserve"><value>تردد الاضطراب</value></data>
+  <data name="Settings_Distortion.Text" xml:space="preserve"><value>قوة الانكسار</value></data>
+  <data name="Settings_TintOpacity.Text" xml:space="preserve"><value>شفافية لون الزجاج</value></data>
+  <data name="Settings_SpecularRim.Text" xml:space="preserve"><value>شدة الانعكاس الحافي</value></data>
+  <data name="Settings_ImportTheme.Content" xml:space="preserve"><value>استيراد سمة JSON</value></data>
+  <data name="Settings_ExportTheme.Content" xml:space="preserve"><value>تصدير سمة JSON</value></data>
+  <data name="Settings_ResetGlass.Content" xml:space="preserve"><value>إعادة ضبط الزجاج</value></data>
+  <data name="Settings_Close.Content" xml:space="preserve"><value>إغلاق</value></data>
+  <data name="Settings_NavUpdates.Content" xml:space="preserve"><value>التحديثات</value></data>
+  <data name="Settings_UpdatesTitle.Text" xml:space="preserve"><value>التحديثات</value></data>
+  <data name="Settings_UpdatesSubtitle.Text" xml:space="preserve"><value>حافظ على تحديث Xperience Music Player بأحدث الإصدارات الرسمية المتحقق منها عبر SHA-256 من GitHub Releases.</value></data>
+  <data name="Settings_CurrentVersionLabel.Text" xml:space="preserve"><value>الإصدار المثبّت</value></data>
+  <data name="Settings_CurrentVersionDesc.Text" xml:space="preserve"><value>تحقق مما إذا كان هناك إصدار أحدث متاح لجهاز Windows الخاص بك</value></data>
+  <data name="Settings_CheckUpdatesNow.Text" xml:space="preserve"><value>التحقق من التحديثات الآن</value></data>
+  <data name="Settings_AutoCheckUpdatesTitle.Text" xml:space="preserve"><value>التحقق من التحديثات تلقائياً عند البدء</value></data>
+  <data name="Settings_AutoCheckUpdatesDesc.Text" xml:space="preserve"><value>إجراء فحص صامت في الخلفية عند تشغيل التطبيق</value></data>
+  <data name="Settings_UpdatesToggleOn" xml:space="preserve"><value>مفعّل</value></data>
+  <data name="Settings_UpdatesToggleOff" xml:space="preserve"><value>متوقف</value></data>
+  <data name="Settings_UpdatesViewAvailable.Text" xml:space="preserve"><value>عرض التحديث</value></data>
+  <data name="Update_DialogTitle" xml:space="preserve"><value>يتوفر تحديث جديد</value></data>
+  <data name="Update_NowButton" xml:space="preserve"><value>التحديث الآن</value></data>
+  <data name="Update_LaterButton" xml:space="preserve"><value>لاحقاً</value></data>
+  <data name="Update_ChangelogHeader" xml:space="preserve"><value>ما الجديد في هذا الإصدار</value></data>
+  <data name="Update_EmptyChangelog" xml:space="preserve"><value>يتضمن هذا الإصدار تحسينات في الأداء والاستقرار وإصلاحات للأخطاء.</value></data>
+  <data name="Update_StatusChecking" xml:space="preserve"><value>جارٍ التحقق من التحديثات...</value></data>
+  <data name="Update_StatusUpToDate" xml:space="preserve"><value>أنت تستخدم بالفعل أحدث إصدار ({0}).</value></data>
+  <data name="Update_StatusNoReleases" xml:space="preserve"><value>لا توجد إصدارات منشورة على GitHub بعد (الحالي: {0}).</value></data>
+  <data name="Update_StatusAvailable" xml:space="preserve"><value>يتوفر تحديث: {0} (المثبّت: {1})</value></data>
+  <data name="Update_StatusCleaning" xml:space="preserve"><value>جارٍ تجهيز التنزيل الآمن...</value></data>
+  <data name="Update_StatusDownloading" xml:space="preserve"><value>جارٍ تنزيل التحديث ({0:0}%)...</value></data>
+  <data name="Update_StatusDownloadingIndeterminate" xml:space="preserve"><value>جارٍ تنزيل التحديث...</value></data>
+  <data name="Update_StatusVerifying" xml:space="preserve"><value>جارٍ التحقق من سلامة SHA-256...</value></data>
+  <data name="Update_StatusLaunching" xml:space="preserve"><value>تم التحقق من السلامة. جارٍ تشغيل المثبّت وإغلاق التطبيق...</value></data>
+  <data name="Update_ErrorIntegrityMismatch" xml:space="preserve"><value>فشل التحقق من سلامة SHA-256: لم يتطابق الملف المنزّل مع البصمة الرسمية وتم حذفه فوراً لحمايتك.</value></data>
+  <data name="Update_ErrorMissingChecksum" xml:space="preserve"><value>تم حظر التحديث لأسباب أمنية: لم يتم العثور على بصمة SHA-256 صالحة للمثبّت.</value></data>
+  <data name="Update_ErrorNoCompatibleAsset" xml:space="preserve"><value>تم العثور على الإصدار {0}، لكنه لا يتضمن مثبّت Windows متوافق مع هذه البنية.</value></data>
+  <data name="Update_ErrorNetwork" xml:space="preserve"><value>تعذر الاتصال بـ GitHub Releases. يرجى التحقق من اتصال الإنترنت والمحاولة مجدداً.</value></data>
+  <data name="Update_ErrorGeneric" xml:space="preserve"><value>تعذر التحقق من التحديثات: {0}</value></data>
+  <data name="Update_ErrorDownloadFailed" xml:space="preserve"><value>فشل تنزيل التحديث: {0}</value></data>
+  <data name="Update_ErrorLaunchFailed" xml:space="preserve"><value>تعذر تشغيل المثبّت المتحقق منه: {0}</value></data>
+  <data name="Update_ErrorUacCancelled" xml:space="preserve"><value>تم إلغاء التثبيت من نافذة أذونات Windows (UAC).</value></data>
+</root>

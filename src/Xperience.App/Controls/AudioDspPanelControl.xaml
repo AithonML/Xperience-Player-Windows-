@@ -1,0 +1,740 @@
+<UserControl
+    x:Class="Xperience.App.Controls.AudioDspPanelControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:Xperience.App.Controls"
+    xmlns:helpers="using:Xperience.App.Helpers"
+    mc:Ignorable="d">
+
+    <controls:LiquidGlassPanel x:Name="PanelGlassRoot"
+                               Width="428"
+                               MaxHeight="610"
+                               GlassCornerRadius="26"
+                               GlassPadding="18,16"
+                               SampleLiveBackdrop="True">
+        <Grid RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- 1. Panel Header: Title | Reset Defaults | Close -->
+            <Grid Grid.Row="0" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Border Width="28" Height="28"
+                            CornerRadius="14"
+                            Background="#28EC4899"
+                            BorderBrush="#66EC4899"
+                            BorderThickness="1">
+                        <FontIcon Glyph="&#xE9E9;"
+                                  FontSize="13"
+                                  Foreground="#FFF472B6"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Audio Effects &amp; Sleep Timer"
+                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                   FontSize="15"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFFFFFF" />
+                        <TextBlock x:Name="HeaderSummarySubtitle"
+                                   Text="Real-time Biquad engine • 150ms anti-click ramp"
+                                   FontFamily="{StaticResource TokenBodyFontFamily}"
+                                   FontSize="10.5"
+                                   Foreground="#B8FFFFFF" />
+                    </StackPanel>
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        Click="OnResetAllDspClicked"
+                        Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                        Height="28"
+                        CornerRadius="14"
+                        Padding="10,0"
+                        Background="#1FFFFFFF"
+                        helpers:MicroInteractions.HoverScale="1.05"
+                        helpers:MicroInteractions.PressScale="0.95"
+                        ToolTipService.ToolTip="Reset Equalizer, Speed, Pitch &amp; Nightcore to 1.0x">
+                    <TextBlock Text="Reset"
+                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               Foreground="#E6FFFFFF"
+                               VerticalAlignment="Center" />
+                </Button>
+
+                <Button Grid.Column="2"
+                        Click="OnClosePanelClicked"
+                        Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                        Width="28" Height="28"
+                        CornerRadius="14"
+                        Padding="0"
+                        Background="#1FFFFFFF"
+                        helpers:MicroInteractions.HoverScale="1.10"
+                        helpers:MicroInteractions.PressScale="0.90"
+                        ToolTipService.ToolTip="Close DSP panel">
+                    <FontIcon Glyph="&#xE711;" FontSize="11" Foreground="#FFFFFFFF" />
+                </Button>
+            </Grid>
+
+            <!-- 2. 1-Click Nightcore Real-Time DSP Hero Card -->
+            <Border x:Name="NightcoreHeroCardBorder"
+                    Grid.Row="1"
+                    CornerRadius="18"
+                    Padding="13,11"
+                    BorderThickness="1.2"
+                    BorderBrush="#48EC4899"
+                    Background="#22181124">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="1-Click Nightcore Mode"
+                                           FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                           FontSize="13.5"
+                                           FontWeight="Bold"
+                                           Foreground="#FFFFFFFF" />
+                                <Border CornerRadius="6"
+                                        Padding="5,1"
+                                        Background="#33EC4899"
+                                        BorderBrush="#66EC4899"
+                                        BorderThickness="0.75"
+                                        VerticalAlignment="Center">
+                                    <TextBlock Text="DSP REAL-TIME"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="8.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FFF9A8D4" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock x:Name="NightcoreChainStatusText"
+                                       Text="Coupled Speed + Pitch (1.22x • +3.44 st) + 90Hz Punch + 3.5kHz Presence"
+                                       FontFamily="{StaticResource TokenBodyFontFamily}"
+                                       FontSize="10.5"
+                                       Foreground="#CCFFFFFF"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <controls:NightcorePillButton x:Name="HeroNightcorePillButton"
+                                                      Grid.Column="1"
+                                                      VerticalAlignment="Center" />
+                    </Grid>
+
+                    <!-- Nightcore 3-Stage Series Filter Chain Spec Badges -->
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Border CornerRadius="7" Padding="6,2.5" Background="#24000000" BorderBrush="#30FFFFFF" BorderThickness="0.75">
+                            <TextBlock Text="Low-Shelf 90Hz +6dB Q=0.7" FontSize="9.5" FontWeight="SemiBold" Foreground="#FFFBCFE8" />
+                        </Border>
+                        <Border CornerRadius="7" Padding="6,2.5" Background="#24000000" BorderBrush="#30FFFFFF" BorderThickness="0.75">
+                            <TextBlock Text="Peaking 3.5kHz +2dB" FontSize="9.5" FontWeight="SemiBold" Foreground="#FFE9D5FF" />
+                        </Border>
+                        <Border CornerRadius="7" Padding="6,2.5" Background="#24000000" BorderBrush="#30FFFFFF" BorderThickness="0.75">
+                            <TextBlock Text="Limiter -6dB 4:1" FontSize="9.5" FontWeight="SemiBold" Foreground="#FFBAE6FD" />
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Fine-tune Nightcore Resampling Rate (1.20x - 1.25x) -->
+                    <Grid x:Name="NightcoreRateSliderRow"
+                          ColumnSpacing="8"
+                          Visibility="Collapsed"
+                          Margin="0,2,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="Nightcore Rate:"
+                                   FontSize="10.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#E0FFFFFF"
+                                   VerticalAlignment="Center" />
+                        <Slider x:Name="NightcoreRateSlider"
+                                Grid.Column="1"
+                                Minimum="1.20"
+                                Maximum="1.25"
+                                StepFrequency="0.01"
+                                Value="1.22"
+                                ValueChanged="OnNightcoreRateSliderValueChanged"
+                                VerticalAlignment="Center" />
+                        <TextBlock x:Name="NightcoreRateValueText"
+                                   Grid.Column="2"
+                                   Text="1.22x (+3.4 st)"
+                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                   FontSize="10.5"
+                                   FontWeight="Bold"
+                                   Foreground="#FFF472B6"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- 3. Segmented Sub-Tab Bar: [ Equalizer | Speed & Pitch | Sleep Timer ] -->
+            <Border Grid.Row="2"
+                    CornerRadius="16"
+                    Padding="3"
+                    Background="#22000000"
+                    BorderBrush="#26FFFFFF"
+                    BorderThickness="1">
+                <Grid ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button x:Name="TabBtnEqualizer"
+                            Grid.Column="0"
+                            Click="OnTabEqualizerClicked"
+                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                            Height="32"
+                            CornerRadius="13"
+                            HorizontalAlignment="Stretch"
+                            Background="#38FFFFFF">
+                        <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE9E9;" FontSize="11.5" Foreground="#FFFFFFFF" />
+                            <TextBlock Text="Equalizer"
+                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                       FontSize="11.5"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFFFFFF" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="TabBtnSpeedPitch"
+                            Grid.Column="1"
+                            Click="OnTabSpeedPitchClicked"
+                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                            Height="32"
+                            CornerRadius="13"
+                            HorizontalAlignment="Stretch"
+                            Background="Transparent">
+                        <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xEC57;" FontSize="11.5" Foreground="#FFFFFFFF" />
+                            <TextBlock Text="Speed &amp; Pitch"
+                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                       FontSize="11.5"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFFFFFF" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button x:Name="TabBtnSleepTimer"
+                            Grid.Column="2"
+                            Click="OnTabSleepTimerClicked"
+                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                            Height="32"
+                            CornerRadius="13"
+                            HorizontalAlignment="Stretch"
+                            Background="Transparent">
+                        <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE916;" FontSize="11.5" Foreground="#FF7DD3FC" />
+                            <TextBlock Text="Sleep Timer"
+                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                       FontSize="11.5"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFFFFFF" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+            </Border>
+
+            <!-- 4. Tab Views Host -->
+            <ScrollViewer Grid.Row="3"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          MaxHeight="350">
+                <Grid>
+                    <!-- ================================================================= -->
+                    <!-- TAB 1: MULTI-BAND PARAMETRIC EQUALIZER & BASS / TREBLE            -->
+                    <!-- ================================================================= -->
+                    <StackPanel x:Name="EqualizerTabPanel"
+                                Visibility="Visible"
+                                Spacing="10">
+                        <!-- EQ Presets Wrap Row -->
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="EQUALIZER PRESETS"
+                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="#99FFFFFF" />
+                            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Disabled">
+                                <StackPanel Orientation="Horizontal" Spacing="6" Padding="0,2">
+                                    <Button Click="OnEqPresetButtonClicked" Tag="Flat" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#24FFFFFF">
+                                        <TextBlock Text="Flat" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnEqPresetButtonClicked" Tag="BassBoost" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#24FFFFFF">
+                                        <TextBlock Text="Bass Boost" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnEqPresetButtonClicked" Tag="VocalClarity" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#24FFFFFF">
+                                        <TextBlock Text="Vocal Clarity" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnEqPresetButtonClicked" Tag="Electronic" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#24FFFFFF">
+                                        <TextBlock Text="Electronic" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnEqPresetButtonClicked" Tag="Rock" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#24FFFFFF">
+                                        <TextBlock Text="Rock" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnEqPresetButtonClicked" Tag="Pop" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#24FFFFFF">
+                                        <TextBlock Text="Pop" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnEqPresetButtonClicked" Tag="Nightcore" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="11" Padding="10,4" Background="#28EC4899">
+                                        <TextBlock Text="Nightcore Punch" FontSize="11" FontWeight="Bold" Foreground="#FFF9A8D4" />
+                                    </Button>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </StackPanel>
+
+                        <!-- Bass (Sub-Bass) & Treble Dedicated Tone Sliders -->
+                        <Border CornerRadius="14"
+                                Padding="12,8"
+                                Background="#1A000000"
+                                BorderBrush="#24FFFFFF"
+                                BorderThickness="1">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="TONE CONTROL (BASS &amp; TREBLE)"
+                                           FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="#99FFFFFF" />
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="92" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Bass (100 Hz)" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="BassBoostSlider"
+                                            Grid.Column="1"
+                                            Minimum="-12" Maximum="12" StepFrequency="0.5"
+                                            Value="0"
+                                            ValueChanged="OnBassBoostSliderValueChanged"
+                                            VerticalAlignment="Center" />
+                                    <TextBlock x:Name="BassBoostValueText"
+                                               Grid.Column="2"
+                                               Text="0.0 dB"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFFFFFF"
+                                               TextAlignment="Right"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="92" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Treble (10 kHz)" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="TrebleBoostSlider"
+                                            Grid.Column="1"
+                                            Minimum="-12" Maximum="12" StepFrequency="0.5"
+                                            Value="0"
+                                            ValueChanged="OnTrebleBoostSliderValueChanged"
+                                            VerticalAlignment="Center" />
+                                    <TextBlock x:Name="TrebleBoostValueText"
+                                               Grid.Column="2"
+                                               Text="0.0 dB"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFFFFFF"
+                                               TextAlignment="Right"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 5-Band Parametric Equalizer Sliders -->
+                        <Border CornerRadius="14"
+                                Padding="12,8"
+                                Background="#1A000000"
+                                BorderBrush="#24FFFFFF"
+                                BorderThickness="1">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="5-BAND PARAMETRIC EQUALIZER (-12 dB to +12 dB)"
+                                           FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="#99FFFFFF" />
+
+                                <!-- Band 0: 60 Hz -->
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="60 Hz" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="EqBand0Slider" Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="0.5" Tag="0" ValueChanged="OnEqBandSliderValueChanged" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="EqBand0ValueText" Grid.Column="2" Text="0.0 dB" FontFamily="{StaticResource TokenHeadingFontFamily}" FontSize="11" FontWeight="Bold" Foreground="#FFFFFFFF" TextAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Band 1: 230 Hz -->
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="230 Hz" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="EqBand1Slider" Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="0.5" Tag="1" ValueChanged="OnEqBandSliderValueChanged" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="EqBand1ValueText" Grid.Column="2" Text="0.0 dB" FontFamily="{StaticResource TokenHeadingFontFamily}" FontSize="11" FontWeight="Bold" Foreground="#FFFFFFFF" TextAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Band 2: 910 Hz -->
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="910 Hz" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="EqBand2Slider" Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="0.5" Tag="2" ValueChanged="OnEqBandSliderValueChanged" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="EqBand2ValueText" Grid.Column="2" Text="0.0 dB" FontFamily="{StaticResource TokenHeadingFontFamily}" FontSize="11" FontWeight="Bold" Foreground="#FFFFFFFF" TextAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Band 3: 3.6 kHz -->
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="3.6 kHz" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="EqBand3Slider" Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="0.5" Tag="3" ValueChanged="OnEqBandSliderValueChanged" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="EqBand3ValueText" Grid.Column="2" Text="0.0 dB" FontFamily="{StaticResource TokenHeadingFontFamily}" FontSize="11" FontWeight="Bold" Foreground="#FFFFFFFF" TextAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Band 4: 14 kHz -->
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="14 kHz" FontSize="11.5" FontWeight="SemiBold" Foreground="#E6FFFFFF" VerticalAlignment="Center" />
+                                    <Slider x:Name="EqBand4Slider" Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="0.5" Tag="4" ValueChanged="OnEqBandSliderValueChanged" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="EqBand4ValueText" Grid.Column="2" Text="0.0 dB" FontFamily="{StaticResource TokenHeadingFontFamily}" FontSize="11" FontWeight="Bold" Foreground="#FFFFFFFF" TextAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- ================================================================= -->
+                    <!-- TAB 2: PLAYBACK SPEED (0.5x-2.0x) & PITCH / SEMITONE CONTROL       -->
+                    <!-- ================================================================= -->
+                    <StackPanel x:Name="SpeedPitchTabPanel"
+                                Visibility="Collapsed"
+                                Spacing="12">
+                        <!-- Playback Speed Card -->
+                        <Border CornerRadius="14"
+                                Padding="13,10"
+                                Background="#1A000000"
+                                BorderBrush="#24FFFFFF"
+                                BorderThickness="1">
+                            <StackPanel Spacing="8">
+                                <Grid>
+                                    <TextBlock Text="Speed"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="12.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFFFFFF" />
+                                    <TextBlock x:Name="PlaybackSpeedValueText"
+                                               Text="1.00x"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="12.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FFF472B6"
+                                               HorizontalAlignment="Right" />
+                                </Grid>
+
+                                <Slider x:Name="PlaybackSpeedSlider"
+                                        Minimum="0.50"
+                                        Maximum="2.00"
+                                        StepFrequency="0.01"
+                                        Value="1.00"
+                                        ValueChanged="OnPlaybackSpeedSliderValueChanged" />
+
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Button Click="OnQuickSpeedButtonClicked" Tag="0.75" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="0.75x" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickSpeedButtonClicked" Tag="1.00" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="1.0x" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickSpeedButtonClicked" Tag="1.15" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="1.15x" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickSpeedButtonClicked" Tag="1.22" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#28EC4899">
+                                        <TextBlock Text="1.22x (NC)" FontSize="10.5" FontWeight="Bold" Foreground="#FFF9A8D4" />
+                                    </Button>
+                                    <Button Click="OnQuickSpeedButtonClicked" Tag="1.50" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="1.5x" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickSpeedButtonClicked" Tag="2.00" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="2.0x" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Pitch / Semitone Control Card -->
+                        <Border CornerRadius="14"
+                                Padding="13,10"
+                                Background="#1A000000"
+                                BorderBrush="#24FFFFFF"
+                                BorderThickness="1">
+                            <StackPanel Spacing="8">
+                                <Grid>
+                                    <TextBlock Text="Pitch (Semitone Shift)"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="12.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFFFFFF" />
+                                    <TextBlock x:Name="PitchSemitonesValueText"
+                                               Text="0.0 st"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="12.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FF38BDF8"
+                                               HorizontalAlignment="Right" />
+                                </Grid>
+
+                                <Slider x:Name="PitchSemitonesSlider"
+                                        Minimum="-12.0"
+                                        Maximum="12.0"
+                                        StepFrequency="0.5"
+                                        Value="0.0"
+                                        ValueChanged="OnPitchSemitonesSliderValueChanged" />
+
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Button Click="OnQuickPitchButtonClicked" Tag="-4" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="-4 st" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickPitchButtonClicked" Tag="-2" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="-2 st" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickPitchButtonClicked" Tag="0" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="0 st" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickPitchButtonClicked" Tag="2" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="+2 st" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                    <Button Click="OnQuickPitchButtonClicked" Tag="3.5" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#28EC4899">
+                                        <TextBlock Text="+3.5 st" FontSize="10.5" FontWeight="Bold" Foreground="#FFF9A8D4" />
+                                    </Button>
+                                    <Button Click="OnQuickPitchButtonClicked" Tag="6" Style="{StaticResource TransparentEmbeddedButtonStyle}" CornerRadius="10" Padding="9,4" Background="#22FFFFFF">
+                                        <TextBlock Text="+6 st" FontSize="10.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                                    </Button>
+                                </StackPanel>
+
+                                <!-- Coupled Resampling Toggle (preservesPitch = false) -->
+                                <Grid ColumnSpacing="8" Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="1" VerticalAlignment="Center">
+                                        <TextBlock Text="Couple Pitch to Speed (Vinyl Resampling)"
+                                                   FontSize="11.5"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFFFFFF" />
+                                        <TextBlock Text="Disables time-stretching (preservesPitch = false) so pitch shifts naturally with playback speed."
+                                                   FontSize="10"
+                                                   Foreground="#AAFFFFFF"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="CouplePitchToSpeedToggle"
+                                                  Grid.Column="1"
+                                                  OnContent=""
+                                                  OffContent=""
+                                                  MinWidth="44"
+                                                  Toggled="OnCouplePitchToSpeedToggled"
+                                                  VerticalAlignment="Center" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- ================================================================= -->
+                    <!-- TAB 3: MUSIC SLEEP TIMER ("Temporizador de música")               -->
+                    <!-- ================================================================= -->
+                    <StackPanel x:Name="SleepTimerTabPanel"
+                                Visibility="Collapsed"
+                                Spacing="10">
+                        <!-- Live Countdown Card -->
+                        <Border x:Name="SleepTimerStatusCardBorder"
+                                CornerRadius="16"
+                                Padding="14,12"
+                                Background="#200284C7"
+                                BorderBrush="#5538BDF8"
+                                BorderThickness="1.2">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0"
+                                        Width="38" Height="38"
+                                        CornerRadius="19"
+                                        Background="#2838BDF8"
+                                        BorderBrush="#6638BDF8"
+                                        BorderThickness="1">
+                                    <FontIcon Glyph="&#xE916;"
+                                              FontSize="16"
+                                              Foreground="#FF7DD3FC"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Border>
+
+                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock x:Name="SleepTimerHeroCountdownText"
+                                               Text="Off"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="15"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFFFFFF" />
+                                    <TextBlock x:Name="SleepTimerHeroSubtitleText"
+                                               Text="Select a duration to smoothly fade out and pause music automatically."
+                                               FontFamily="{StaticResource TokenBodyFontFamily}"
+                                               FontSize="10.5"
+                                               Foreground="#CCFFFFFF"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <StackPanel x:Name="SleepTimerActiveActionsPanel"
+                                            Grid.Column="2"
+                                            Visibility="Collapsed"
+                                            Orientation="Horizontal"
+                                            Spacing="6"
+                                            VerticalAlignment="Center">
+                                    <Button Click="OnSleepTimerAdd5MinClicked"
+                                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                                            CornerRadius="12"
+                                            Padding="10,6"
+                                            Background="#28FFFFFF"
+                                            ToolTipService.ToolTip="Add 5 minutes">
+                                        <TextBlock Text="+5 min" FontSize="11" FontWeight="Bold" Foreground="#FFE0F2FE" />
+                                    </Button>
+                                    <Button Click="OnSleepTimerCancelClicked"
+                                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                                            CornerRadius="12"
+                                            Padding="10,6"
+                                            Background="#38EF4444"
+                                            ToolTipService.ToolTip="Stop sleep timer">
+                                        <TextBlock Text="Off" FontSize="11" FontWeight="Bold" Foreground="#FFFECACA" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Quick Sleep Timer Presets Grid -->
+                        <TextBlock Text="TIMER DURATION"
+                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="#99FFFFFF" />
+
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Button Grid.Row="0" Grid.Column="0" Click="OnSleepTimerPresetClicked" Tag="5" Style="{StaticResource TransparentEmbeddedButtonStyle}" HorizontalAlignment="Stretch" Height="38" CornerRadius="12" Background="#22FFFFFF">
+                                <TextBlock Text="5 min" FontSize="11.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                            </Button>
+                            <Button Grid.Row="0" Grid.Column="1" Click="OnSleepTimerPresetClicked" Tag="15" Style="{StaticResource TransparentEmbeddedButtonStyle}" HorizontalAlignment="Stretch" Height="38" CornerRadius="12" Background="#22FFFFFF">
+                                <TextBlock Text="15 min" FontSize="11.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                            </Button>
+                            <Button Grid.Row="0" Grid.Column="2" Click="OnSleepTimerPresetClicked" Tag="30" Style="{StaticResource TransparentEmbeddedButtonStyle}" HorizontalAlignment="Stretch" Height="38" CornerRadius="12" Background="#22FFFFFF">
+                                <TextBlock Text="30 min" FontSize="11.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                            </Button>
+
+                            <Button Grid.Row="1" Grid.Column="0" Click="OnSleepTimerPresetClicked" Tag="45" Style="{StaticResource TransparentEmbeddedButtonStyle}" HorizontalAlignment="Stretch" Height="38" CornerRadius="12" Background="#22FFFFFF">
+                                <TextBlock Text="45 min" FontSize="11.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                            </Button>
+                            <Button Grid.Row="1" Grid.Column="1" Click="OnSleepTimerPresetClicked" Tag="60" Style="{StaticResource TransparentEmbeddedButtonStyle}" HorizontalAlignment="Stretch" Height="38" CornerRadius="12" Background="#22FFFFFF">
+                                <TextBlock Text="60 min" FontSize="11.5" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                            </Button>
+                            <Button Grid.Row="1" Grid.Column="2" Click="OnSleepTimerEndOfTrackClicked" Style="{StaticResource TransparentEmbeddedButtonStyle}" HorizontalAlignment="Stretch" Height="38" CornerRadius="12" Background="#2838BDF8">
+                                <TextBlock Text="End of Track" FontSize="11.5" FontWeight="Bold" Foreground="#FFBAE6FD" />
+                            </Button>
+                        </Grid>
+
+                        <!-- Custom Minutes Selector -->
+                        <Border CornerRadius="14"
+                                Padding="12,9"
+                                Background="#1A000000"
+                                BorderBrush="#24FFFFFF"
+                                BorderThickness="1">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="CustomTimerMinutesLabel"
+                                           Grid.Column="0"
+                                           Text="Custom: 25 min"
+                                           FontSize="11.5"
+                                           FontWeight="SemiBold"
+                                           Foreground="#E6FFFFFF"
+                                           MinWidth="126"
+                                           VerticalAlignment="Center" />
+                                <Slider x:Name="CustomTimerMinutesSlider"
+                                        Grid.Column="1"
+                                        Minimum="1"
+                                        Maximum="180"
+                                        StepFrequency="1"
+                                        Value="25"
+                                        ValueChanged="OnCustomTimerSliderValueChanged"
+                                        VerticalAlignment="Center" />
+                                <Button Grid.Column="2"
+                                        Click="OnStartCustomTimerClicked"
+                                        Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                                        CornerRadius="11"
+                                        Padding="12,6"
+                                        Background="#3338BDF8">
+                                    <TextBlock Text="Start"
+                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               Foreground="#FFE0F2FE" />
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
+    </controls:LiquidGlassPanel>
+</UserControl>

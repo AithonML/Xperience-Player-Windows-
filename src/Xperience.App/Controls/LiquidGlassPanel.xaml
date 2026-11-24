@@ -1,0 +1,31 @@
+<UserControl
+    x:Class="Xperience.App.Controls.LiquidGlassPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid x:Name="RootGrid"
+          Background="Transparent">
+
+        <!-- Layer 1: Fallback Theme Surface (Only visible if Liquid Glass shaders are disabled or SampleLiveBackdrop=False) -->
+        <Border x:Name="BackdropHost"
+                Visibility="Collapsed"
+                CornerRadius="{x:Bind ToCornerRadius(GlassCornerRadius), Mode=OneWay}"
+                Background="{ThemeResource TokenSurfaceBackgroundBrush}"
+                BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                BorderThickness="1" />
+
+        <!-- Layer 2: DWM Hardware Composition Liquid Glass Visual Host (0-frame lag GPU backdrop, meniscus refraction & 45° Fresnel highlight) -->
+        <Border x:Name="GlassVisualHost"
+                IsHitTestVisible="False" />
+
+        <!-- Layer 3: User Content Presenter -->
+        <ContentPresenter x:Name="ContentHost"
+                          Padding="{x:Bind GlassPadding, Mode=OneWay}"
+                          HorizontalContentAlignment="Stretch"
+                          VerticalContentAlignment="Stretch"
+                          Content="{x:Bind InnerContent, Mode=OneWay}" />
+    </Grid>
+</UserControl>
