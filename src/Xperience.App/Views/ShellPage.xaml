@@ -10313,11 +10313,13 @@
                                                          Text="{x:Bind ViewModel.YouTubeAccountLabelInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                          CornerRadius="4"
                                                          FontSize="12.5" />
-                                                <TextBox Grid.Column="1"
-                                                         PlaceholderText="Paste Cookie header containing SAPISID=..."
-                                                         Text="{x:Bind ViewModel.YouTubeCookieInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                         CornerRadius="4"
-                                                         FontSize="12.5" />
+                                                <PasswordBox x:Name="YouTubeCookiePasswordBox"
+                                                             Grid.Column="1"
+                                                             PasswordRevealMode="Hidden"
+                                                             PlaceholderText="Paste Cookie header from music.youtube.com..."
+                                                             Password="{x:Bind ViewModel.YouTubeMusicCookieHeaderInput, Mode=TwoWay}"
+                                                             CornerRadius="4"
+                                                             FontSize="12.5" />
                                                 <Button Grid.Column="2"
                                                         Content="Connect Cookie"
                                                         Command="{x:Bind ViewModel.ConnectYouTubeAccountCookieCommand, Mode=OneWay}"

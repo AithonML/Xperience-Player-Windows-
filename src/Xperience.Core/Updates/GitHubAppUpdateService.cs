@@ -6,13 +6,14 @@ using System.Text;
 using System.Text.Json;
 using Xperience.Core.Abstractions;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 
 namespace Xperience.Core.Updates;
 
 /// <summary>
 /// Secure GitHub Releases auto-update service implementing SemVer 2.0.0 comparison,
-/// Windows architecture-aware asset selection, streaming %TEMP% downloads with progress,
-/// and fail-closed streaming SHA-256 verification.
+/// Windows architecture-aware asset selection, streaming downloads with progress into
+/// <c>%LocalAppData%\XperienceMusicPlayer\Updates</c>, and fail-closed streaming SHA-256 verification.
 /// </summary>
 public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
 {
@@ -50,6 +51,16 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
     public string UpdatesDirectory => _updatesDirectory;
 
     /// <summary>
+    /// Resolves the default user-scoped directory for staging verified installer downloads.
+    /// </summary>
+    public static string GetDefaultUpdatesDirectory()
+    {
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string baseRoot = !string.IsNullOrWhiteSpace(localAppData) ? localAppData : Path.GetTempPath();
+        return Path.Combine(baseRoot, "XperienceMusicPlayer", "Updates");
+    }
+
+    /// <summary>
     /// Initializes a new instance of <see cref="GitHubAppUpdateService"/>.
     /// </summary>
     public GitHubAppUpdateService(
@@ -69,7 +80,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
             : latestReleaseEndpoint;
         _updatesDirectory = Path.GetFullPath(
             string.IsNullOrWhiteSpace(updatesDirectory)
-                ? Path.Combine(Path.GetTempPath(), "XperienceMusicPlayer", "Updates")
+                ? GetDefaultUpdatesDirectory()
                 : updatesDirectory);
         _architectureOverride = architectureOverride;
         _isPackagedApp = isPackagedApp;
@@ -87,12 +98,13 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
         {
             var handler = new SocketsHttpHandler
             {
+                AllowAutoRedirect = false,
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(2),
                 ConnectTimeout = TimeSpan.FromSeconds(15)
             };
 
-            _httpClient = new HttpClient(handler)
+            _httpClient = new HttpClient(new SafeRedirectDelegatingHandler(handler, WindowsReleaseAssetSelector.IsAllowedGitHubUpdateHost))
             {
                 Timeout = TimeSpan.FromMinutes(15)
             };
@@ -103,7 +115,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
     /// <inheritdoc />
     public async Task<UpdateCheckResult> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        if (!WindowsReleaseAssetSelector.IsValidHttpsUrl(_latestReleaseEndpoint))
+        if (!WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(_latestReleaseEndpoint))
         {
             return new UpdateCheckResult(
                 UpdateCheckStatus.Error,
@@ -124,12 +136,12 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
                 metadataToken).ConfigureAwait(false);
 
             if (response.RequestMessage?.RequestUri is { } finalUri &&
-                !WindowsReleaseAssetSelector.IsValidHttpsUrl(finalUri.AbsoluteUri))
+                !WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(finalUri.AbsoluteUri))
             {
                 return new UpdateCheckResult(
                     UpdateCheckStatus.NetworkError,
                     CurrentVersion,
-                    ErrorMessage: "Refused non-HTTPS redirect from update endpoint.");
+                    ErrorMessage: "Refused untrusted or non-HTTPS redirect from update endpoint.");
             }
 
             if (response.StatusCode == HttpStatusCode.NotFound)
@@ -213,7 +225,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
                 TagName: releaseDto.TagName.Trim(),
                 ReleaseName: string.IsNullOrWhiteSpace(releaseDto.Name) ? latestVersion.DisplayTag : releaseDto.Name.Trim(),
                 ReleaseNotes: releaseDto.Body?.Trim() ?? string.Empty,
-                ReleaseUrl: WindowsReleaseAssetSelector.IsValidHttpsUrl(releaseDto.HtmlUrl)
+                ReleaseUrl: WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(releaseDto.HtmlUrl)
                     ? releaseDto.HtmlUrl!
                     : "https://github.com/AithonML/Xperience-Player-Windows-/releases",
                 PublishedAt: releaseDto.PublishedAt,
@@ -282,11 +294,11 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
         }
 
         if (release.SelectedAsset is null ||
-            !WindowsReleaseAssetSelector.IsValidHttpsUrl(release.SelectedAsset.BrowserDownloadUrl))
+            !WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(release.SelectedAsset.BrowserDownloadUrl))
         {
             return new UpdateDownloadResult(
                 Succeeded: false,
-                ErrorMessage: "Installer download URL must use HTTPS.");
+                ErrorMessage: "Installer download URL must target an allowlisted GitHub HTTPS host.");
         }
 
         if (!TryBuildSafeDestinationPaths(release.SelectedAsset.Name, out string partFilePath, out string finalFilePath))
@@ -316,12 +328,12 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
                 cancellationToken).ConfigureAwait(false);
 
             if (response.RequestMessage?.RequestUri is { } finalUri &&
-                !WindowsReleaseAssetSelector.IsValidHttpsUrl(finalUri.AbsoluteUri))
+                !WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(finalUri.AbsoluteUri))
             {
                 return new UpdateDownloadResult(
                     Succeeded: false,
                     ExpectedSha256: normalizedExpectedSha256,
-                    ErrorMessage: "Refused non-HTTPS redirect during installer download.");
+                    ErrorMessage: "Refused untrusted or non-HTTPS redirect during installer download.");
             }
 
             if (!response.IsSuccessStatusCode)
@@ -629,7 +641,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
 
     private async Task<string?> DownloadSmallTextAssetAsync(string httpsUrl, CancellationToken cancellationToken)
     {
-        if (!WindowsReleaseAssetSelector.IsValidHttpsUrl(httpsUrl))
+        if (!WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(httpsUrl))
         {
             return null;
         }
@@ -645,7 +657,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
             checksumToken).ConfigureAwait(false);
 
         if (response.RequestMessage?.RequestUri is { } finalUri &&
-            !WindowsReleaseAssetSelector.IsValidHttpsUrl(finalUri.AbsoluteUri))
+            !WindowsReleaseAssetSelector.IsAllowedGitHubUpdateUrl(finalUri.AbsoluteUri))
         {
             return null;
         }

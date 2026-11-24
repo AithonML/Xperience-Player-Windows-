@@ -8,6 +8,7 @@ using Microsoft.Web.WebView2.Core;
 using Windows.Graphics;
 using Windows.Storage.Streams;
 using WinRT.Interop;
+using Xperience.Core.Services;
 
 namespace Xperience.App.Services;
 
@@ -211,7 +212,8 @@ public sealed class WindowsWebView2PlayerScriptSolver : IPlayerScriptResolver, I
         CancellationToken cancellationToken = default)
     {
         string cleanUrl = url.Trim();
-        if (string.IsNullOrWhiteSpace(cleanUrl))
+        if (string.IsNullOrWhiteSpace(cleanUrl) ||
+            !YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(cleanUrl))
         {
             return null;
         }
@@ -267,12 +269,15 @@ public sealed class WindowsWebView2PlayerScriptSolver : IPlayerScriptResolver, I
             TouchWebViewActivity();
 
             if (!string.IsNullOrWhiteSpace(transformed) &&
-                transformed.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(transformed))
             {
                 return transformed;
             }
 
-            return string.IsNullOrWhiteSpace(signature) ? cleanUrl : null;
+            return string.IsNullOrWhiteSpace(signature) &&
+                   YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(cleanUrl)
+                ? cleanUrl
+                : null;
         }
         finally
         {

@@ -23,6 +23,7 @@ using Xperience.App.ViewModels;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 
 namespace Xperience.App.Views;
 
@@ -3859,13 +3860,23 @@ public sealed partial class ShellPage : Page
     private async void OnInteractiveYouTubeLoginRequested(object? sender, EventArgs e)
     {
         WebView2? webView = null;
+        string? loginUserDataDir = null;
         try
         {
-            string loginUserDataDir = Path.Combine(
+            string tempRoot = Path.Combine(Path.GetTempPath(), "XperienceMusicPlayer");
+            Directory.CreateDirectory(tempRoot);
+            loginUserDataDir = Path.Combine(tempRoot, $"wv2_login_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(loginUserDataDir);
+
+            // Also remove any legacy persistent WebView2Login directory if still present
+            string legacyLoginDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "XperienceMusicPlayer",
                 "WebView2Login");
-            Directory.CreateDirectory(loginUserDataDir);
+            if (Directory.Exists(legacyLoginDir))
+            {
+                _ = Task.Run(() => DeleteDirectoryWithRetryAsync(legacyLoginDir));
+            }
 
             webView = new WebView2
             {
@@ -3963,7 +3974,35 @@ public sealed partial class ShellPage : Page
                 browserExecutableFolder: null,
                 userDataFolder: loginUserDataDir,
                 options: null);
-            await webView.EnsureCoreWebView2Async(env);
+            var controllerOptions = env.CreateCoreWebView2ControllerOptions();
+            controllerOptions.IsInPrivateModeEnabled = true;
+            await webView.EnsureCoreWebView2Async(env, controllerOptions);
+
+            var settings = webView.CoreWebView2.Settings;
+            settings.AreDevToolsEnabled = false;
+            settings.AreDefaultContextMenusEnabled = false;
+            settings.IsStatusBarEnabled = false;
+            settings.AreBrowserAcceleratorKeysEnabled = false;
+            settings.IsPasswordAutosaveEnabled = false;
+            settings.IsGeneralAutofillEnabled = false;
+            settings.IsWebMessageEnabled = false;
+
+            webView.CoreWebView2.NavigationStarting += (_, navStartArgs) =>
+            {
+                if (!YouTubeSecurityPolicy.IsAllowedGoogleAuthUrl(navStartArgs.Uri))
+                {
+                    navStartArgs.Cancel = true;
+                }
+            };
+
+            webView.CoreWebView2.NewWindowRequested += (wv, newWinArgs) =>
+            {
+                newWinArgs.Handled = true;
+                if (YouTubeSecurityPolicy.IsAllowedGoogleAuthUrl(newWinArgs.Uri))
+                {
+                    wv.Navigate(newWinArgs.Uri);
+                }
+            };
 
             webView.CoreWebView2.NavigationCompleted += async (wv, navArgs) =>
             {
@@ -4026,7 +4065,45 @@ public sealed partial class ShellPage : Page
         }
         finally
         {
+            if (webView?.CoreWebView2 is { } coreWebView)
+            {
+                try { coreWebView.CookieManager.DeleteAllCookies(); } catch { }
+                try
+                {
+                    await coreWebView.Profile.ClearBrowsingDataAsync(
+                        Microsoft.Web.WebView2.Core.CoreWebView2BrowsingDataKinds.AllProfile);
+                }
+                catch { }
+            }
+
             try { webView?.Close(); } catch { }
+
+            if (!string.IsNullOrWhiteSpace(loginUserDataDir))
+            {
+                string dirToDelete = loginUserDataDir;
+                _ = Task.Run(() => DeleteDirectoryWithRetryAsync(dirToDelete));
+            }
+        }
+    }
+
+    private static async Task DeleteDirectoryWithRetryAsync(string directoryPath)
+    {
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(directoryPath))
+                {
+                    return;
+                }
+
+                Directory.Delete(directoryPath, recursive: true);
+                return;
+            }
+            catch
+            {
+                await Task.Delay(500).ConfigureAwait(false);
+            }
         }
     }
 
