@@ -10,6 +10,7 @@ public sealed partial class ShellPage
     private string? _loadedFullscreenMusicVideoUri;
     private bool _isMusicVideoPlayerInitialized;
     private int _musicVideoLoadGeneration;
+    private long _lastMusicVideoSeekTickMs;
 
     private void InitializeFullscreenMusicVideoFeatures()
     {
@@ -52,10 +53,7 @@ public sealed partial class ShellPage
 
                     if (ViewModel.IsFullscreenVideoMode)
                     {
-                        if (FullscreenMusicVideoContainer is not null)
-                        {
-                            FullscreenMusicVideoContainer.Opacity = 1.0;
-                        }
+                        SetMusicVideoContainersOpacity(1.0);
 
                         if (ViewModel.IsPlaying)
                         {
@@ -80,10 +78,7 @@ public sealed partial class ShellPage
                     return;
                 }
 
-                if (FullscreenMusicVideoContainer is not null)
-                {
-                    FullscreenMusicVideoContainer.Opacity = 0.0;
-                }
+                SetMusicVideoContainersOpacity(0.0);
 
                 _loadedFullscreenMusicVideoUri = null;
                 ReplaceMediaSource(_fullscreenMusicVideoPlayer, null);
@@ -94,13 +89,63 @@ public sealed partial class ShellPage
             });
         };
 
-        FullscreenMusicVideoPlayerElement?.SetMediaPlayer(_fullscreenMusicVideoPlayer);
+        AttachActiveMusicVideoPlayerElement();
+    }
+
+    private void SetMusicVideoContainersOpacity(double opacity)
+    {
+        if (FullscreenMusicVideoContainer is not null)
+        {
+            FullscreenMusicVideoContainer.Opacity = opacity;
+        }
+
+        if (SidebarMusicVideoContainer is not null)
+        {
+            SidebarMusicVideoContainer.Opacity = opacity;
+        }
+    }
+
+    private void AttachActiveMusicVideoPlayerElement()
+    {
+        if (_fullscreenMusicVideoPlayer is null)
+        {
+            return;
+        }
+
+        if (ViewModel.IsFullscreenNowPlayingOpen && FullscreenMusicVideoPlayerElement is not null)
+        {
+            try { SidebarMusicVideoPlayerElement?.SetMediaPlayer(null); } catch { }
+            FullscreenMusicVideoPlayerElement.SetMediaPlayer(_fullscreenMusicVideoPlayer);
+        }
+        else if (SidebarMusicVideoPlayerElement is not null)
+        {
+            try { FullscreenMusicVideoPlayerElement?.SetMediaPlayer(null); } catch { }
+            SidebarMusicVideoPlayerElement.SetMediaPlayer(_fullscreenMusicVideoPlayer);
+        }
+    }
+
+    private void OnSidebarMusicVideoPlayerElementLoaded(object sender, RoutedEventArgs e)
+    {
+        if (_fullscreenMusicVideoPlayer is not null && !ViewModel.IsFullscreenNowPlayingOpen &&
+            sender is Microsoft.UI.Xaml.Controls.MediaPlayerElement element)
+        {
+            element.SetMediaPlayer(_fullscreenMusicVideoPlayer);
+        }
+    }
+
+    private void OnSidebarMusicVideoPlayerElementUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Microsoft.UI.Xaml.Controls.MediaPlayerElement element)
+        {
+            try { element.SetMediaPlayer(null); } catch { }
+        }
     }
 
     private void OnFullscreenMusicVideoPlayerElementLoaded(object sender, RoutedEventArgs e)
     {
         if (_fullscreenMusicVideoPlayer is not null && sender is Microsoft.UI.Xaml.Controls.MediaPlayerElement element)
         {
+            try { SidebarMusicVideoPlayerElement?.SetMediaPlayer(null); } catch { }
             element.SetMediaPlayer(_fullscreenMusicVideoPlayer);
         }
     }
@@ -112,6 +157,10 @@ public sealed partial class ShellPage
             try
             {
                 element.SetMediaPlayer(null);
+                if (_fullscreenMusicVideoPlayer is not null && ViewModel.IsFullscreenVideoMode)
+                {
+                    SidebarMusicVideoPlayerElement?.SetMediaPlayer(_fullscreenMusicVideoPlayer);
+                }
             }
             catch
             {
@@ -124,6 +173,7 @@ public sealed partial class ShellPage
         Interlocked.Increment(ref _musicVideoLoadGeneration);
         _loadedFullscreenMusicVideoUri = null;
         try { FullscreenMusicVideoPlayerElement?.SetMediaPlayer(null); } catch { }
+        try { SidebarMusicVideoPlayerElement?.SetMediaPlayer(null); } catch { }
         DisposeMediaPlayerSafe(ref _fullscreenMusicVideoPlayer);
     }
 
@@ -158,7 +208,7 @@ public sealed partial class ShellPage
 
     private async Task ApplyFullscreenMusicVideoStateAsync(string? streamUri, bool isVideoModeActive)
     {
-        if (FullscreenMusicVideoContainer is null)
+        if (FullscreenMusicVideoContainer is null && SidebarMusicVideoContainer is null)
         {
             return;
         }
@@ -166,16 +216,15 @@ public sealed partial class ShellPage
         if (string.IsNullOrWhiteSpace(streamUri) || !isVideoModeActive)
         {
             Interlocked.Increment(ref _musicVideoLoadGeneration);
-            FullscreenMusicVideoContainer.Opacity = 0.0;
+            SetMusicVideoContainersOpacity(0.0);
             _fullscreenMusicVideoPlayer?.Pause();
-            if (string.IsNullOrWhiteSpace(streamUri))
-            {
-                _loadedFullscreenMusicVideoUri = null;
-                ReplaceMediaSource(_fullscreenMusicVideoPlayer, null);
-            }
-
+            _loadedFullscreenMusicVideoUri = null;
+            ReplaceMediaSource(_fullscreenMusicVideoPlayer, null);
+            ResumeTrackCanvasIfNeeded();
             return;
         }
+
+        PauseTrackCanvasForVideoMode();
 
         int generation = Interlocked.Increment(ref _musicVideoLoadGeneration);
         try
@@ -186,7 +235,7 @@ public sealed partial class ShellPage
                 return;
             }
 
-            FullscreenMusicVideoPlayerElement?.SetMediaPlayer(_fullscreenMusicVideoPlayer);
+            AttachActiveMusicVideoPlayerElement();
 
             if (!string.Equals(_loadedFullscreenMusicVideoUri, streamUri, StringComparison.OrdinalIgnoreCase))
             {
@@ -238,10 +287,7 @@ public sealed partial class ShellPage
             }
 
             SyncFullscreenVideoPlaybackRate(_fullscreenMusicVideoPlayer);
-            if (FullscreenMusicVideoContainer is not null)
-            {
-                FullscreenMusicVideoContainer.Opacity = 1.0;
-            }
+            SetMusicVideoContainersOpacity(1.0);
 
             if (ViewModel.IsPlaying)
             {
@@ -254,10 +300,7 @@ public sealed partial class ShellPage
         }
         catch
         {
-            if (FullscreenMusicVideoContainer is not null)
-            {
-                FullscreenMusicVideoContainer.Opacity = 0.0;
-            }
+            SetMusicVideoContainersOpacity(0.0);
 
             _loadedFullscreenMusicVideoUri = null;
             ReplaceMediaSource(_fullscreenMusicVideoPlayer, null);
@@ -285,10 +328,15 @@ public sealed partial class ShellPage
 
             if (session.CanSeek &&
                 session.NaturalDuration.TotalSeconds > 1.0 &&
-                targetSec < session.NaturalDuration.TotalSeconds &&
-                Math.Abs(videoSec - targetSec) > 0.9)
+                targetSec < session.NaturalDuration.TotalSeconds)
             {
-                session.Position = TimeSpan.FromSeconds(targetSec);
+                long nowTickMs = Environment.TickCount64;
+                if (Math.Abs(videoSec - targetSec) > 0.22 &&
+                    nowTickMs - _lastMusicVideoSeekTickMs >= 600)
+                {
+                    _lastMusicVideoSeekTickMs = nowTickMs;
+                    session.Position = TimeSpan.FromSeconds(targetSec);
+                }
             }
 
             SyncFullscreenVideoPlaybackRate(_fullscreenMusicVideoPlayer);

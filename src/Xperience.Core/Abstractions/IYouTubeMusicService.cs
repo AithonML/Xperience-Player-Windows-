@@ -31,6 +31,15 @@ public interface IYouTubeMusicService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves a quality-tier-aware audio stream with certified codec, bitrate, sample rate, channel count, and byte size metadata.
+    /// </summary>
+    Task<ResolvedPlaybackStream?> ResolveAudioStreamWithMetadataAsync(
+        string videoId,
+        Domain.Enums.StreamingAudioQuality requestedQuality,
+        CancellationToken cancellationToken = default,
+        bool resolveCanonicalAtv = true);
+
+    /// <summary>
     /// Retrieves the official ordered tracklist for a specific album on YouTube Music
     /// using the InnerTube <c>browse</c> (<c>MPREb_...</c>) album endpoint.
     /// </summary>
@@ -75,7 +84,8 @@ public interface IYouTubeMusicService
     /// <returns>An <see cref="ArtistDetailProfile"/> populated exclusively from YouTube Music, or <c>null</c> if not found.</returns>
     Task<ArtistDetailProfile?> GetArtistProfileAsync(
         string artistName,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? explicitBrowseId = null);
 
     /// <summary>
     /// Resolves the official high-resolution artist portrait image URL directly from YouTube Music
@@ -273,10 +283,33 @@ public interface IYouTubeMusicService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves whether a track has an authentic Official Music Video (<c>MUSIC_VIDEO_TYPE_OMV</c>) counterpart
+    /// and any InnerTube <c>segmentMap</c> timeline alignment segments, without downloading video media bytes.
+    /// </summary>
+    Task<OfficialMusicVideoMetadata?> ResolveOfficialMusicVideoMetadataAsync(
+        TrackItem track,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Resolves a playable official music video counterpart (<c>MUSIC_VIDEO_TYPE_OMV</c>) and its local/direct MP4 video stream
     /// for the specified track to power the Fullscreen Audio / Video Switcher ("Canción | Video").
     /// </summary>
     Task<ResolvedMusicVideoStream?> ResolveMusicVideoStreamAsync(
         TrackItem track,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fetches the signed-in user's YouTube Music library playlists from InnerTube <c>FEmusic_liked_playlists</c>
+    /// across continuation pages. Returns an empty list if not authenticated.
+    /// </summary>
+    Task<IReadOnlyList<YouTubeMusicLibraryPlaylist>> FetchUserLibraryPlaylistsAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fetches all playable tracks (including studio ATV promotions and retained OMV/video items),
+    /// header artwork, and description for a user's YouTube Music playlist across continuation pages.
+    /// </summary>
+    Task<(IReadOnlyList<TrackItem> Tracks, string? CoverUri, string? Description)> FetchUserPlaylistTracksAsync(
+        YouTubeMusicLibraryPlaylist playlist,
         CancellationToken cancellationToken = default);
 }

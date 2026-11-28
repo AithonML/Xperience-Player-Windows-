@@ -163,9 +163,26 @@ internal sealed class MediaFoundationPcmDecoder : IDisposable
     public int LastSeekHResult { get; private set; }
 
     /// <summary>
+    /// Gets the exact decoded sample timestamp landed on after the most recent <see cref="Seek(TimeSpan)"/>.
+    /// </summary>
+    public TimeSpan LastSeekActualPosition { get; private set; } = TimeSpan.Zero;
+
+    /// <summary>
     /// Seeks the decoder to <paramref name="position"/> and clears any leftover decoded chunk.
+    /// Automatically marshals onto an MTA thread when invoked from an STA UI thread so the
+    /// Media Foundation <c>IMFSourceReader</c> COM RCW never fails with <c>E_NOINTERFACE</c>.
     /// </summary>
     public bool Seek(TimeSpan position)
+    {
+        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+        {
+            return Task.Run(() => SeekCore(position)).GetAwaiter().GetResult();
+        }
+
+        return SeekCore(position);
+    }
+
+    private bool SeekCore(TimeSpan position)
     {
         lock (_readerLock)
         {
@@ -202,12 +219,126 @@ internal sealed class MediaFoundationPcmDecoder : IDisposable
                 long nearEndMarginTicks = TimeSpan.FromMilliseconds(250).Ticks;
                 if (hr < 0 && Duration.Ticks > nearEndMarginTicks && targetTicks > Duration.Ticks - nearEndMarginTicks)
                 {
-                    seekVariant.hVal = Math.Max(0L, Duration.Ticks - nearEndMarginTicks);
+                    targetTicks = Math.Max(0L, Duration.Ticks - nearEndMarginTicks);
+                    seekVariant.hVal = targetTicks;
                     hr = _reader.SetCurrentPosition(in timeFormat, ref seekVariant);
                 }
 
                 LastSeekHResult = hr;
-                return hr >= 0;
+                if (hr < 0)
+                {
+                    return false;
+                }
+
+                LastSeekActualPosition = TimeSpan.FromTicks(targetTicks);
+
+                // Fragmented DASH .m4a and WebM/Opus cues seek to the sync point AT OR BEFORE targetTicks (often 1-4s earlier).
+                // Decode and discard pre-roll samples up to targetTicks so seeking is sample-accurate.
+                if (targetTicks > 0)
+                {
+                    long maxPrerollWindowTicks = TimeSpan.FromSeconds(15).Ticks;
+                    int emptyReads = 0;
+                    for (int iter = 0; iter < 512 && !_reachedEof; iter++)
+                    {
+                        int readHr;
+                        uint streamFlags;
+                        long samplePtsTicks;
+                        IMFSample? sample;
+                        try
+                        {
+                            readHr = _reader.ReadSample(
+                                MF_SOURCE_READER_FIRST_AUDIO_STREAM,
+                                0,
+                                out _,
+                                out streamFlags,
+                                out samplePtsTicks,
+                                out sample);
+                        }
+                        catch
+                        {
+                            _reachedEof = true;
+                            break;
+                        }
+
+                        if (readHr < 0 || (streamFlags & MF_SOURCE_READERF_ERROR) != 0)
+                        {
+                            if (sample is not null)
+                            {
+                                Marshal.ReleaseComObject(sample);
+                            }
+                            _reachedEof = true;
+                            break;
+                        }
+
+                        if ((streamFlags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0)
+                        {
+                            RefreshNegotiatedMediaTypeLocked();
+                        }
+
+                        if ((streamFlags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
+                        {
+                            _reachedEof = true;
+                        }
+
+                        if (sample is null)
+                        {
+                            if (_reachedEof || ++emptyReads > 16)
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        emptyReads = 0;
+                        int decodedFrames = 0;
+                        try
+                        {
+                            if (!TryDecodeSampleToStereoLocked(sample, out decodedFrames))
+                            {
+                                continue;
+                            }
+                        }
+                        finally
+                        {
+                            Marshal.ReleaseComObject(sample);
+                        }
+
+                        if (decodedFrames <= 0)
+                        {
+                            continue;
+                        }
+
+                        int sr = Math.Max(8000, SampleRate);
+                        if (samplePtsTicks >= 0 &&
+                            samplePtsTicks < targetTicks &&
+                            (targetTicks - samplePtsTicks) <= maxPrerollWindowTicks)
+                        {
+                            long deltaTicks = targetTicks - samplePtsTicks;
+                            int skipFrames = (int)Math.Round(deltaTicks * (double)sr / TimeSpan.TicksPerSecond);
+                            if (skipFrames >= decodedFrames)
+                            {
+                                LastSeekActualPosition = TimeSpan.FromTicks(
+                                    samplePtsTicks + (long)Math.Round(decodedFrames * (double)TimeSpan.TicksPerSecond / sr));
+                                continue;
+                            }
+
+                            int keepFrames = decodedFrames - Math.Max(0, skipFrames);
+                            StoreLeftoverFramesLocked(_scratchCopyBuffer, Math.Max(0, skipFrames), keepFrames);
+                            LastSeekActualPosition = TimeSpan.FromTicks(
+                                samplePtsTicks + (long)Math.Round(Math.Max(0, skipFrames) * (double)TimeSpan.TicksPerSecond / sr));
+                            break;
+                        }
+
+                        StoreLeftoverFramesLocked(_scratchCopyBuffer, 0, decodedFrames);
+                        if (samplePtsTicks >= 0)
+                        {
+                            LastSeekActualPosition = TimeSpan.FromTicks(samplePtsTicks);
+                        }
+                        break;
+                    }
+                }
+
+                return true;
             }
             catch (Exception ex)
             {
@@ -217,11 +348,116 @@ internal sealed class MediaFoundationPcmDecoder : IDisposable
         }
     }
 
+    private void StoreLeftoverFramesLocked(float[] stereoInterleaved, int startFrame, int frameCount)
+    {
+        if (frameCount <= 0)
+        {
+            return;
+        }
+
+        int floatCount = frameCount * 2;
+        if (_leftoverBuffer.Length < floatCount)
+        {
+            _leftoverBuffer = new float[Math.Max(floatCount, 8192)];
+        }
+
+        Array.Copy(stereoInterleaved, startFrame * 2, _leftoverBuffer, 0, floatCount);
+        _leftoverOffsetFloats = 0;
+        _leftoverCountFloats = floatCount;
+    }
+
+    private bool TryDecodeSampleToStereoLocked(IMFSample sample, out int stereoFrames)
+    {
+        stereoFrames = 0;
+        IMFMediaBuffer? mediaBuffer = null;
+        try
+        {
+            int hr = sample.ConvertToContiguousBuffer(out mediaBuffer);
+            if (hr < 0 || mediaBuffer is null)
+            {
+                return false;
+            }
+
+            hr = mediaBuffer.Lock(out IntPtr pData, out _, out uint currentLengthBytes);
+            if (hr < 0 || currentLengthBytes < sizeof(float))
+            {
+                return false;
+            }
+
+            try
+            {
+                int rawFloatCount = (int)(currentLengthBytes / sizeof(float));
+                int srcCh = Math.Max(1, _decodedChannels);
+                int sampleFrames = rawFloatCount / srcCh;
+                if (sampleFrames <= 0)
+                {
+                    return false;
+                }
+
+                int requiredBufferFloats = Math.Max(rawFloatCount, sampleFrames * 2);
+                if (_scratchCopyBuffer.Length < requiredBufferFloats)
+                {
+                    _scratchCopyBuffer = new float[Math.Max(requiredBufferFloats, _scratchCopyBuffer.Length * 2)];
+                }
+
+                Marshal.Copy(pData, _scratchCopyBuffer, 0, rawFloatCount);
+
+                if (srcCh == 1)
+                {
+                    for (int f = sampleFrames - 1; f >= 0; f--)
+                    {
+                        float mono = _scratchCopyBuffer[f];
+                        _scratchCopyBuffer[f * 2] = mono;
+                        _scratchCopyBuffer[(f * 2) + 1] = mono;
+                    }
+                }
+                else if (srcCh > 2)
+                {
+                    for (int f = 0; f < sampleFrames; f++)
+                    {
+                        int baseSrc = f * srcCh;
+                        _scratchCopyBuffer[f * 2] = _scratchCopyBuffer[baseSrc];
+                        _scratchCopyBuffer[(f * 2) + 1] = _scratchCopyBuffer[baseSrc + 1];
+                    }
+                }
+
+                stereoFrames = sampleFrames;
+                return true;
+            }
+            finally
+            {
+                mediaBuffer.Unlock();
+            }
+        }
+        finally
+        {
+            if (mediaBuffer is not null)
+            {
+                Marshal.ReleaseComObject(mediaBuffer);
+            }
+        }
+    }
+
     /// <summary>
     /// Reads up to <paramref name="maxFrames"/> interleaved stereo float frames (2 floats per frame)
     /// into <paramref name="destination"/>.
     /// </summary>
     public int ReadStereoFrames(float[] destination, int destFloatOffset, int maxFrames, out bool reachedEof)
+    {
+        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+        {
+            bool eofResult = false;
+            int frames = Task.Run(() => ReadStereoFramesCore(destination, destFloatOffset, maxFrames, out eofResult))
+                .GetAwaiter()
+                .GetResult();
+            reachedEof = eofResult;
+            return frames;
+        }
+
+        return ReadStereoFramesCore(destination, destFloatOffset, maxFrames, out reachedEof);
+    }
+
+    private int ReadStereoFramesCore(float[] destination, int destFloatOffset, int maxFrames, out bool reachedEof)
     {
         reachedEof = false;
         if (maxFrames <= 0)

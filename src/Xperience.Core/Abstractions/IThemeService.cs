@@ -30,6 +30,11 @@ public interface IThemeService
     ThemePaletteDefinition CurrentTheme { get; }
 
     /// <summary>
+    /// Gets the active appearance mode preference (System, Dark, or Light).
+    /// </summary>
+    AppThemePreference ThemePreference { get; }
+
+    /// <summary>
     /// Gets the current Win2D Liquid Glass effect parameters.
     /// </summary>
     LiquidGlassParameters LiquidGlass { get; }
@@ -61,6 +66,14 @@ public interface IThemeService
     /// <param name="themeId">The target theme identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task ApplyThemeAsync(string themeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets the appearance preference (<see cref="AppThemePreference.System"/>, <see cref="AppThemePreference.Dark"/>,
+    /// or <see cref="AppThemePreference.Light"/>) and immediately synchronizes the active theme.
+    /// </summary>
+    /// <param name="preference">The desired theme synchronization mode.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SetThemePreferenceAsync(AppThemePreference preference, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Applies a custom theme definition loaded from JSON or created dynamically by the user.

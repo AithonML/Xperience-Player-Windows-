@@ -155,6 +155,16 @@ public sealed class SynchronizedLyricsCanvasControl : Grid
             new PropertyMetadata(false, OnVisualStyleChanged));
 
     /// <summary>
+    /// Identifies the <see cref="IsSuspended"/> dependency property.
+    /// </summary>
+    public static readonly DependencyProperty IsSuspendedProperty =
+        DependencyProperty.Register(
+            nameof(IsSuspended),
+            typeof(bool),
+            typeof(SynchronizedLyricsCanvasControl),
+            new PropertyMetadata(false, OnVisibilityLikeChanged));
+
+    /// <summary>
     /// Raised when the user taps a lyric line to seek playback.
     /// </summary>
     public event EventHandler<SynchronizedLyricLineViewModel>? LineClicked;
@@ -276,6 +286,15 @@ public sealed class SynchronizedLyricsCanvasControl : Grid
     }
 
     /// <summary>
+    /// Gets or sets whether rendering is suspended (e.g., while Fullscreen overlay covers the Sidebar).
+    /// </summary>
+    public bool IsSuspended
+    {
+        get => (bool)GetValue(IsSuspendedProperty);
+        set => SetValue(IsSuspendedProperty, value);
+    }
+
+    /// <summary>
     /// Gets whether manual user scrolling is currently overriding auto-center blur &amp; fade.
     /// </summary>
     public bool IsUserScrolling => _isUserScrolling;
@@ -318,9 +337,28 @@ public sealed class SynchronizedLyricsCanvasControl : Grid
         ResetForNewLyrics();
     }
 
+    private static void OnVisibilityLikeChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not SynchronizedLyricsCanvasControl control)
+        {
+            return;
+        }
+
+        if (control.IsEffectivelyVisible())
+        {
+            control.EnsureRenderLoop();
+            control.InvalidateCanvasSafe();
+        }
+        else
+        {
+            control.UnhookRenderLoop();
+        }
+    }
+
     private void ResetForNewLyrics()
     {
         DisposeMeasuredLayouts();
+        try { CanvasDevice.GetSharedDevice()?.Trim(); } catch { }
         _layoutsDirty = true;
         _scrollY = 0f;
         _targetScrollY = 0f;
@@ -447,6 +485,14 @@ public sealed class SynchronizedLyricsCanvasControl : Grid
             _canvas.Draw -= OnCanvasDraw;
             _canvas.RemoveFromVisualTree();
             _canvas = null;
+        }
+
+        try
+        {
+            CanvasDevice.GetSharedDevice()?.Trim();
+        }
+        catch
+        {
         }
     }
 
@@ -653,7 +699,7 @@ public sealed class SynchronizedLyricsCanvasControl : Grid
 
     private bool IsEffectivelyVisible()
     {
-        if (!IsLoaded || Visibility != Visibility.Visible || ActualWidth <= 4 || ActualHeight <= 4)
+        if (IsSuspended || !IsLoaded || Visibility != Visibility.Visible || ActualWidth <= 4 || ActualHeight <= 4)
         {
             return false;
         }
@@ -891,92 +937,123 @@ public sealed class SynchronizedLyricsCanvasControl : Grid
         Color glowTint,
         bool useAlphaMask)
     {
-        for (int i = 0; i < _measuredLines.Count; i++)
+        // Bucket blurred inactive lines into 3 shared blur tiers so each frame allocates at most 3
+        // CanvasCommandList + GaussianBlurEffect pairs instead of 15-20 per-line GPU intermediates.
+        CanvasCommandList?[] tierLists = new CanvasCommandList?[3];
+        CanvasDrawingSession?[] tierSessions = new CanvasDrawingSession?[3];
+        float[] tierBlurAmounts = [1.05f, 2.35f, 3.95f];
+
+        try
         {
-            var line = _measuredLines[i];
-            float screenTop = line.TopY - _scrollY;
-            float screenBottom = line.BottomY - _scrollY;
-            if (screenBottom < -70f || screenTop > height + 70f)
+            for (int i = 0; i < _measuredLines.Count; i++)
             {
-                continue;
-            }
-
-            float lineCenterScreenY = (screenTop + screenBottom) * 0.5f;
-            bool isActive = hasSynchronized && i == activeIndex;
-            int distance = hasSynchronized && activeIndex >= 0 ? Math.Abs(i - activeIndex) : 0;
-
-            float syncAlpha = !hasSynchronized ? 0.90f : (distance switch
-            {
-                0 => 1.00f,
-                1 => 0.62f,
-                2 => 0.40f,
-                3 => 0.24f,
-                _ => 0.14f
-            });
-
-            float syncBlur = !hasSynchronized ? 0f : (distance switch
-            {
-                0 => 0f,
-                1 => 0.9f,
-                2 => 2.1f,
-                3 => 3.3f,
-                _ => 4.3f
-            });
-
-            // Fade + blur smoothly as lines exit top or bottom viewport edges
-            float topVis = Math.Clamp((lineCenterScreenY - 12f) / 64f, 0f, 1f);
-            float bottomVis = Math.Clamp((height - 14f - lineCenterScreenY) / 72f, 0f, 1f);
-            float edgeVis = Math.Min(topVis, bottomVis);
-            float edgeAlphaMul = useAlphaMask ? 1.0f : (0.16f + 0.84f * edgeVis);
-            float edgeBlur = (1f - edgeVis) * (useAlphaMask ? 2.6f : 4.2f);
-
-            float targetNormalAlpha = Math.Max(0.80f, syncAlpha);
-            float finalAlpha = isActive
-                ? Lerp(edgeAlphaMul, 1.0f, _userScrollBlend)
-                : Lerp(syncAlpha * edgeAlphaMul, targetNormalAlpha, _userScrollBlend);
-
-            float combinedSyncBlur = isActive ? edgeBlur * 0.65f : (syncBlur + edgeBlur);
-            float finalBlur = Lerp(combinedSyncBlur, 0f, _userScrollBlend);
-
-            if (i == _hoveredLineIndex)
-            {
-                Color hoverBg = isLight
-                    ? Color.FromArgb(24, 15, 23, 42)
-                    : Color.FromArgb(24, 255, 255, 255);
-                ds.FillRoundedRectangle(
-                    HorizontalPadding - 8f,
-                    screenTop - 4f,
-                    width - (HorizontalPadding * 2f) + 16f,
-                    (line.BottomY - line.TopY) + 8f,
-                    12f,
-                    12f,
-                    hoverBg);
-            }
-
-            if (isActive)
-            {
-                DrawActiveLine(ds, line, -_scrollY, litInk, glowTint, finalAlpha);
-            }
-            else if (finalBlur <= 0.22f)
-            {
-                DrawInactiveLineDirect(ds, line, -_scrollY, inactiveBaseInk, finalAlpha);
-            }
-            else
-            {
-                using var cmdList = new CanvasCommandList(ds);
-                using (var cmdDs = cmdList.CreateDrawingSession())
+                var line = _measuredLines[i];
+                float screenTop = line.TopY - _scrollY;
+                float screenBottom = line.BottomY - _scrollY;
+                if (screenBottom < -70f || screenTop > height + 70f)
                 {
-                    DrawInactiveLineDirect(cmdDs, line, -_scrollY, inactiveBaseInk, finalAlpha);
+                    continue;
                 }
+
+                float lineCenterScreenY = (screenTop + screenBottom) * 0.5f;
+                bool isActive = hasSynchronized && i == activeIndex;
+                int distance = hasSynchronized && activeIndex >= 0 ? Math.Abs(i - activeIndex) : 0;
+
+                float syncAlpha = !hasSynchronized ? 0.90f : (distance switch
+                {
+                    0 => 1.00f,
+                    1 => 0.62f,
+                    2 => 0.40f,
+                    3 => 0.24f,
+                    _ => 0.14f
+                });
+
+                float syncBlur = !hasSynchronized ? 0f : (distance switch
+                {
+                    0 => 0f,
+                    1 => 0.9f,
+                    2 => 2.1f,
+                    3 => 3.3f,
+                    _ => 4.3f
+                });
+
+                // Fade + blur smoothly as lines exit top or bottom viewport edges
+                float topVis = Math.Clamp((lineCenterScreenY - 12f) / 64f, 0f, 1f);
+                float bottomVis = Math.Clamp((height - 14f - lineCenterScreenY) / 72f, 0f, 1f);
+                float edgeVis = Math.Min(topVis, bottomVis);
+                float edgeAlphaMul = useAlphaMask ? 1.0f : (0.16f + 0.84f * edgeVis);
+                float edgeBlur = (1f - edgeVis) * (useAlphaMask ? 2.6f : 4.2f);
+
+                float targetNormalAlpha = Math.Max(0.80f, syncAlpha);
+                float finalAlpha = isActive
+                    ? Lerp(edgeAlphaMul, 1.0f, _userScrollBlend)
+                    : Lerp(syncAlpha * edgeAlphaMul, targetNormalAlpha, _userScrollBlend);
+
+                float combinedSyncBlur = isActive ? edgeBlur * 0.65f : (syncBlur + edgeBlur);
+                float finalBlur = Lerp(combinedSyncBlur, 0f, _userScrollBlend);
+
+                if (i == _hoveredLineIndex)
+                {
+                    Color hoverBg = isLight
+                        ? Color.FromArgb(24, 15, 23, 42)
+                        : Color.FromArgb(24, 255, 255, 255);
+                    ds.FillRoundedRectangle(
+                        HorizontalPadding - 8f,
+                        screenTop - 4f,
+                        width - (HorizontalPadding * 2f) + 16f,
+                        (line.BottomY - line.TopY) + 8f,
+                        12f,
+                        12f,
+                        hoverBg);
+                }
+
+                if (isActive)
+                {
+                    DrawActiveLine(ds, line, -_scrollY, litInk, glowTint, finalAlpha);
+                }
+                else if (finalBlur <= 0.22f)
+                {
+                    DrawInactiveLineDirect(ds, line, -_scrollY, inactiveBaseInk, finalAlpha);
+                }
+                else
+                {
+                    int tier = finalBlur < 1.65f ? 0 : (finalBlur < 3.15f ? 1 : 2);
+                    if (tierSessions[tier] is null)
+                    {
+                        tierLists[tier] = new CanvasCommandList(ds);
+                        tierSessions[tier] = tierLists[tier]!.CreateDrawingSession();
+                    }
+
+                    DrawInactiveLineDirect(tierSessions[tier]!, line, -_scrollY, inactiveBaseInk, finalAlpha);
+                }
+            }
+
+            for (int t = 0; t < tierLists.Length; t++)
+            {
+                if (tierLists[t] is null)
+                {
+                    continue;
+                }
+
+                tierSessions[t]?.Dispose();
+                tierSessions[t] = null;
 
                 using var blurEffect = new GaussianBlurEffect
                 {
-                    Source = cmdList,
-                    BlurAmount = finalBlur,
+                    Source = tierLists[t],
+                    BlurAmount = tierBlurAmounts[t],
                     BorderMode = EffectBorderMode.Soft,
                     Optimization = EffectOptimization.Speed
                 };
                 ds.DrawImage(blurEffect);
+            }
+        }
+        finally
+        {
+            for (int t = 0; t < tierLists.Length; t++)
+            {
+                tierSessions[t]?.Dispose();
+                tierLists[t]?.Dispose();
             }
         }
     }

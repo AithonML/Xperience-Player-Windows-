@@ -1415,6 +1415,116 @@ public sealed class PlaybackHistoryEntry
 }
 
 /// <summary>
+/// Represents an aligned musical segment between a studio audio track (ATV) and its official music video (OMV),
+/// matching YouTube Music's <c>segmentMap</c> (e.g. skipping an intro skit at 0:00-0:11 in the video so 0:12 song = 0:23 video).
+/// </summary>
+public sealed record MusicVideoTimeSegment(
+    long SongStartMs,
+    long VideoStartMs,
+    long DurationMs);
+
+/// <summary>
+/// Metadata identifying a track's authentic Official Music Video (<c>MUSIC_VIDEO_TYPE_OMV</c>) counterpart
+/// and any timeline alignment segments between Song and Video.
+/// </summary>
+public sealed record OfficialMusicVideoMetadata(
+    string SongVideoId,
+    string OfficialVideoId,
+    IReadOnlyList<MusicVideoTimeSegment> Segments)
+{
+    public TimeSpan MapSongToVideoPosition(TimeSpan songPosition, TimeSpan? videoDuration = null)
+    {
+        long songMs = Math.Max(0L, (long)Math.Round(songPosition.TotalMilliseconds));
+        long mappedMs = songMs;
+
+        if (Segments.Count > 0)
+        {
+            MusicVideoTimeSegment? active = null;
+            for (int i = 0; i < Segments.Count; i++)
+            {
+                var seg = Segments[i];
+                if (songMs >= seg.SongStartMs && songMs <= seg.SongStartMs + seg.DurationMs)
+                {
+                    active = seg;
+                    break;
+                }
+
+                if (songMs >= seg.SongStartMs)
+                {
+                    active = seg;
+                }
+            }
+
+            active ??= Segments[0];
+            mappedMs = active.VideoStartMs + Math.Max(0L, songMs - active.SongStartMs);
+        }
+
+        if (videoDuration is { } vd && vd > TimeSpan.Zero)
+        {
+            long maxMs = Math.Max(0L, (long)vd.TotalMilliseconds);
+            mappedMs = Math.Clamp(mappedMs, 0L, maxMs);
+        }
+
+        return TimeSpan.FromMilliseconds(Math.Max(0L, mappedMs));
+    }
+
+    public TimeSpan MapVideoToSongPosition(TimeSpan videoPosition, TimeSpan? songDuration = null)
+    {
+        long videoMs = Math.Max(0L, (long)Math.Round(videoPosition.TotalMilliseconds));
+        long mappedMs = videoMs;
+
+        if (Segments.Count > 0)
+        {
+            var first = Segments[0];
+            if (videoMs < first.VideoStartMs)
+            {
+                mappedMs = first.SongStartMs;
+            }
+            else
+            {
+                MusicVideoTimeSegment? containing = null;
+                MusicVideoTimeSegment? previous = null;
+                for (int i = 0; i < Segments.Count; i++)
+                {
+                    var seg = Segments[i];
+                    if (videoMs >= seg.VideoStartMs && videoMs <= seg.VideoStartMs + seg.DurationMs)
+                    {
+                        containing = seg;
+                        break;
+                    }
+
+                    if (videoMs > seg.VideoStartMs + seg.DurationMs)
+                    {
+                        previous = seg;
+                    }
+                }
+
+                if (containing is not null)
+                {
+                    mappedMs = containing.SongStartMs + Math.Max(0L, videoMs - containing.VideoStartMs);
+                }
+                else if (previous is not null)
+                {
+                    mappedMs = previous.SongStartMs + previous.DurationMs;
+                }
+                else
+                {
+                    mappedMs = first.SongStartMs;
+                }
+            }
+        }
+
+        if (songDuration is { } sd && sd > TimeSpan.Zero)
+        {
+            long maxMs = Math.Max(0L, (long)sd.TotalMilliseconds);
+            mappedMs = Math.Clamp(mappedMs, 0L, maxMs);
+        }
+
+        return TimeSpan.FromMilliseconds(Math.Max(0L, mappedMs));
+    }
+}
+
+/// <summary>
 /// Represents a resolved YouTube Music video counterpart (Official Music Video / OMV) for a song track,
 /// used by the Fullscreen Audio / Video Switcher ("Canción | Video").
 /// </summary>
@@ -1424,4 +1534,6 @@ public sealed record ResolvedMusicVideoStream(
     string Title,
     string Artist,
     string ThumbnailUri,
-    TimeSpan Duration);
+    TimeSpan Duration,
+    string? SongVideoId = null,
+    IReadOnlyList<MusicVideoTimeSegment>? Segments = null);

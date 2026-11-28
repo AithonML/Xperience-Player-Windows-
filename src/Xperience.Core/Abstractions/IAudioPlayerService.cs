@@ -1,5 +1,6 @@
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
+using Xperience.Core.Domain.Models;
 
 namespace Xperience.Core.Abstractions;
 
@@ -39,6 +40,26 @@ public interface IAudioPlayerService : IDisposable
     /// Raised when a track fails to resolve or play, carrying a user-facing reason message.
     /// </summary>
     event EventHandler<string>? PlaybackErrorOccurred;
+
+    /// <summary>
+    /// Raised when the certified metadata/quality snapshot of the currently playing track updates.
+    /// </summary>
+    event EventHandler<TrackPlaybackInfo?>? CurrentTrackPlaybackInfoChanged;
+
+    /// <summary>
+    /// Gets the certified real-time metadata and received audio quality snapshot for the active track.
+    /// </summary>
+    TrackPlaybackInfo? CurrentTrackPlaybackInfo { get; }
+
+    /// <summary>
+    /// Gets or sets the current playback behavior settings (quality tier, gapless preloading, pause at 0 volume).
+    /// </summary>
+    PlaybackBehaviorSettings BehaviorSettings { get; set; }
+
+    /// <summary>
+    /// Pauses playback immediately (e.g. when a data usage limit is reached).
+    /// </summary>
+    void PausePlayback();
 
     /// <summary>
     /// Gets the currently loaded track, if any.
@@ -114,6 +135,26 @@ public interface IAudioPlayerService : IDisposable
         int startIndex = 0,
         bool autoPlay = true,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replaces the session playback queue starting in shuffled order while remembering
+    /// <paramref name="canonicalTracks"/> so turning Shuffle off restores the original sequence.
+    /// </summary>
+    Task SetShuffledQueueAsync(
+        IReadOnlyList<TrackItem> canonicalTracks,
+        int? startCanonicalIndex = null,
+        bool autoPlay = true,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Captures the active queue, canonical order, current track index, playback progress, shuffle/repeat, and volume.
+    /// </summary>
+    PersistedPlaybackSessionState? CapturePlaybackSessionSnapshot();
+
+    /// <summary>
+    /// Restores a previously persisted playback session into the paused deferred state with exact progress intact.
+    /// </summary>
+    bool RestorePlaybackSession(PersistedPlaybackSessionState session);
 
     /// <summary>
     /// Replaces the session playback queue with a single seed <paramref name="track"/> and immediately triggers
@@ -203,6 +244,21 @@ public interface IAudioPlayerService : IDisposable
     /// </summary>
     /// <param name="index">Zero-based index in <see cref="Queue"/>.</param>
     Task PlayQueueIndexAsync(int index);
+
+    /// <summary>
+    /// Gets whether the active track is currently playing the Official Music Video (<c>OMV</c>) audio variant.
+    /// </summary>
+    bool IsVideoAudioModeActive { get; }
+
+    /// <summary>
+    /// Switches the active track's audio stream seamlessly between the studio Song (<c>ATV</c>) and
+    /// Official Music Video (<c>OMV</c>) audio track, mapping the playback timestamp to the exact corresponding moment.
+    /// </summary>
+    Task<bool> SwitchTrackAudioVariantAsync(
+        string? officialVideoId,
+        bool useVideoAudio,
+        Func<string?, string?, TimeSpan, TimeSpan>? resolveTargetPosition = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Samples the current real-time 64-band frequency spectrum (0.0 to 1.0) and sub-band energies

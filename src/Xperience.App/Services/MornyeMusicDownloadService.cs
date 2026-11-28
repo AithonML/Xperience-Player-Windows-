@@ -14,6 +14,7 @@ using Xperience.Core.Abstractions;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 
 namespace Xperience.App.Services;
 
@@ -52,8 +53,10 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
     private readonly ILyricsProviderService _lyricsProviderService;
     private readonly ICanvasArtworkService _canvasArtworkService;
     private readonly IMediaCatalogService _mediaCatalogService;
+    private readonly IDataUsageService _dataUsageService;
     private readonly ILogger<MornyeMusicDownloadService> _logger;
     private readonly HttpClient _httpClient;
+    private readonly string _flacStreamCacheDir;
     private bool _isInitialized;
 
     /// <inheritdoc />
@@ -68,6 +71,7 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
         ILyricsProviderService lyricsProviderService,
         ICanvasArtworkService canvasArtworkService,
         IMediaCatalogService mediaCatalogService,
+        IDataUsageService dataUsageService,
         ILogger<MornyeMusicDownloadService> logger)
     {
         _storageService = storageService;
@@ -75,7 +79,14 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
         _lyricsProviderService = lyricsProviderService;
         _canvasArtworkService = canvasArtworkService;
         _mediaCatalogService = mediaCatalogService;
+        _dataUsageService = dataUsageService;
         _logger = logger;
+
+        _flacStreamCacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "XperienceMusicPlayer",
+            "FlacStreamCache");
+        Directory.CreateDirectory(_flacStreamCacheDir);
 
         var handler = new SocketsHttpHandler
         {
@@ -504,6 +515,7 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
             // STEP 7: Import into Local Library Catalog so it appears immediately in Library
             ReportStage(98.0, "Importing song into your local library...", providerSummary);
             await _mediaCatalogService.ImportLocalFilesAsync([finalAudioPath], cancellationToken).ConfigureAwait(false);
+            await _dataUsageService.MarkTrackDownloadedAsync(track, cancellationToken).ConfigureAwait(false);
 
             string badge = targetFormat switch
             {
@@ -537,6 +549,142 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                 ProviderSummary: "Error",
                 ErrorMessage: ex.Message);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<ResolvedPlaybackStream?> ResolveDirectFlacStreamAsync(
+        TrackItem track,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(track);
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            Directory.CreateDirectory(_flacStreamCacheDir);
+            string cacheKeySeed = !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
+                ? track.YouTubeVideoId.Trim()
+                : $"{track.Artist}|{track.Title}";
+            string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cacheKeySeed.ToLowerInvariant())))[..16].ToLowerInvariant();
+            string cachedFlacPath = Path.Combine(_flacStreamCacheDir, $"{hash}_flac.flac");
+
+            // 1. Instant verified FLAC cache hit
+            if (File.Exists(cachedFlacPath) && HasValidFlacMagicHeader(cachedFlacPath))
+            {
+                return BuildResolvedFlacStreamFromFile(
+                    cachedFlacPath,
+                    PlaybackSourceKind.FlacGdStudio,
+                    "FLAC Lossless (Cached)",
+                    isrc: string.Empty,
+                    downloadedNetworkBytes: 0);
+            }
+
+            // 2. Resolve Mornye metadata & direct unencrypted FLAC stream (GDStudio / Tidal / Qobuz)
+            var enrichedMeta = await ResolveMornyeMetadataAsync(track, selectedCandidate: null, cancellationToken).ConfigureAwait(false);
+            string tempFlacPath = Path.Combine(_flacStreamCacheDir, $"{hash}_{Guid.NewGuid():N}.part");
+            try
+            {
+                bool downloaded = await TryDownloadDirectLosslessFlacAsync(enrichedMeta, tempFlacPath, cancellationToken).ConfigureAwait(false);
+                if (!downloaded || !File.Exists(tempFlacPath) || !HasValidFlacMagicHeader(tempFlacPath))
+                {
+                    return null;
+                }
+
+                File.Move(tempFlacPath, cachedFlacPath, overwrite: true);
+                long fileSize = new FileInfo(cachedFlacPath).Length;
+
+                PlaybackSourceKind sourceKind = PlaybackSourceKind.FlacGdStudio;
+                if (enrichedMeta.ProviderSource.Contains("Tidal", StringComparison.OrdinalIgnoreCase) &&
+                    !enrichedMeta.ProviderSource.Contains("NETEASE", StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceKind = PlaybackSourceKind.FlacTidal;
+                }
+                else if (enrichedMeta.ProviderSource.Contains("Qobuz", StringComparison.OrdinalIgnoreCase) &&
+                         !enrichedMeta.ProviderSource.Contains("NETEASE", StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceKind = PlaybackSourceKind.FlacQobuz;
+                }
+
+                string providerLabel = string.IsNullOrWhiteSpace(enrichedMeta.ProviderSource)
+                    ? "Mornye FLAC Lossless"
+                    : enrichedMeta.ProviderSource;
+
+                return BuildResolvedFlacStreamFromFile(
+                    cachedFlacPath,
+                    sourceKind,
+                    providerLabel,
+                    isrc: enrichedMeta.Isrc,
+                    downloadedNetworkBytes: fileSize);
+            }
+            finally
+            {
+                if (File.Exists(tempFlacPath))
+                {
+                    try { File.Delete(tempFlacPath); } catch { }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Direct FLAC streaming resolution failed for '{Title}'; will fall back to YouTube Music.", track.Title);
+            return null;
+        }
+    }
+
+    private static ResolvedPlaybackStream BuildResolvedFlacStreamFromFile(
+        string flacPath,
+        PlaybackSourceKind sourceKind,
+        string providerLabel,
+        string isrc,
+        long downloadedNetworkBytes)
+    {
+        long fileSize = 0;
+        int bitrateKbps = 0;
+        int sampleRateHz = 44100;
+        int channels = 2;
+        int bitDepth = 16;
+
+        try
+        {
+            if (File.Exists(flacPath))
+            {
+                fileSize = new FileInfo(flacPath).Length;
+                using var tagFile = TagLib.File.Create(flacPath);
+                var props = tagFile.Properties;
+                if (props is not null)
+                {
+                    if (props.AudioBitrate > 0) bitrateKbps = props.AudioBitrate;
+                    if (props.AudioSampleRate > 0) sampleRateHz = props.AudioSampleRate;
+                    if (props.AudioChannels > 0) channels = props.AudioChannels;
+                    if (props.BitsPerSample > 0) bitDepth = props.BitsPerSample;
+                }
+            }
+        }
+        catch
+        {
+            // Keep safe FLAC defaults if TagLibSharp fails
+        }
+
+        return new ResolvedPlaybackStream(
+            PlaybackUri: flacPath,
+            SourceKind: sourceKind,
+            ProviderLabel: providerLabel,
+            RequestedQuality: StreamingAudioQuality.FlacLossless,
+            ActualQuality: StreamingAudioQuality.FlacLossless,
+            IsFlacFallback: false,
+            FallbackReason: null,
+            Codec: "FLAC",
+            BitrateKbps: bitrateKbps,
+            SampleRateHz: sampleRateHz,
+            ChannelCount: channels,
+            BitDepth: bitDepth,
+            FileSizeBytes: fileSize,
+            Isrc: isrc,
+            DownloadedNetworkBytes: downloadedNetworkBytes);
     }
 
     private sealed class EnrichedMornyeMetadata
@@ -1033,10 +1181,13 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                 {
                     using var regDoc = JsonDocument.Parse(registryJson!);
                     if (regDoc.RootElement.TryGetProperty("gdstudio", out var gdProp) &&
-                        gdProp.ValueKind == JsonValueKind.String &&
-                        !string.IsNullOrWhiteSpace(gdProp.GetString()))
+                        gdProp.ValueKind == JsonValueKind.String)
                     {
-                        gdstudioApiUrl = gdProp.GetString()!;
+                        string? candidateGdUrl = gdProp.GetString();
+                        if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(candidateGdUrl))
+                        {
+                            gdstudioApiUrl = candidateGdUrl!;
+                        }
                     }
                 }
                 catch
@@ -1076,7 +1227,7 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                                 urlsArr.GetArrayLength() > 0)
                             {
                                 string? streamUrl = urlsArr[0].GetString();
-                                if (!string.IsNullOrWhiteSpace(streamUrl) &&
+                                if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(streamUrl) &&
                                     await TryDownloadFileVerifiedAsync(streamUrl!, outputFlacPath, requireFlacHeader: true, meta.DurationSeconds, cancellationToken).ConfigureAwait(false))
                                 {
                                     return true;
@@ -1098,19 +1249,19 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                     foreach (var endpointEl in qobuzArr.EnumerateArray())
                     {
                         string? baseUrl = endpointEl.GetString();
-                        if (string.IsNullOrWhiteSpace(baseUrl))
+                        if (!YouTubeSecurityPolicy.IsSafePublicHttpsUrl(baseUrl))
                         {
                             continue;
                         }
 
-                        string reqUrl = $"{baseUrl.TrimEnd('/')}/stream?track_id={meta.QobuzTrackId}&quality=27";
+                        string reqUrl = $"{baseUrl!.TrimEnd('/')}/stream?track_id={meta.QobuzTrackId}&quality=27";
                         using var resp = await _httpClient.GetAsync(reqUrl, cancellationToken).ConfigureAwait(false);
                         if (resp.IsSuccessStatusCode)
                         {
                             string body = await resp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                             using var sDoc = JsonDocument.Parse(body);
                             string? flacUrl = sDoc.RootElement.TryGetProperty("url", out var uProp) ? uProp.GetString() : null;
-                            if (!string.IsNullOrWhiteSpace(flacUrl) &&
+                            if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(flacUrl) &&
                                 await TryDownloadFileVerifiedAsync(flacUrl!, outputFlacPath, requireFlacHeader: true, meta.DurationSeconds, cancellationToken).ConfigureAwait(false))
                             {
                                 return true;
@@ -1134,6 +1285,11 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
         string outputFlacPath,
         CancellationToken cancellationToken)
     {
+        if (!YouTubeSecurityPolicy.IsSafePublicHttpsUrl(gdstudioApiUrl))
+        {
+            return false;
+        }
+
         // If user explicitly picked a verified GDStudio candidate, try it first
         if (!string.IsNullOrWhiteSpace(meta.GdStudioSource) && !string.IsNullOrWhiteSpace(meta.GdStudioUrlId))
         {
@@ -1149,7 +1305,7 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                 string urlJson = await urlResp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 using var urlDoc = JsonDocument.Parse(urlJson);
                 string? streamUrl = urlDoc.RootElement.TryGetProperty("url", out var uProp) ? uProp.GetString() : null;
-                if (!string.IsNullOrWhiteSpace(streamUrl) &&
+                if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(streamUrl) &&
                     await TryDownloadFileVerifiedAsync(streamUrl!, outputFlacPath, requireFlacHeader: true, meta.DurationSeconds, cancellationToken).ConfigureAwait(false))
                 {
                     meta.ProviderSource = $"Mornye Lossless ({meta.GdStudioSource.ToUpperInvariant()} 24-bit/16-bit FLAC)";

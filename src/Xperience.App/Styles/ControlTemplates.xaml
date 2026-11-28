@@ -555,22 +555,6 @@
                                                 Content="{TemplateBinding Content}"
                                                 ContentTemplate="{TemplateBinding ContentTemplate}" />
 
-                        <!-- Soft semi-transparent right-edge gradient veil so scrolled items blend softly behind the scrollbar -->
-                        <Border Grid.Row="0"
-                                Grid.Column="1"
-                                Width="24"
-                                HorizontalAlignment="Right"
-                                IsHitTestVisible="False"
-                                Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}">
-                            <Border.Background>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                    <GradientStop Offset="0.0" Color="#00000000" />
-                                    <GradientStop Offset="0.5" Color="#08080C12" />
-                                    <GradientStop Offset="1.0" Color="#16080C12" />
-                                </LinearGradientBrush>
-                            </Border.Background>
-                        </Border>
-
                         <!-- Top margin 78px keeps the scrollbar well below the top header and window caption buttons -->
                         <ScrollBar x:Name="VerticalScrollBar"
                                    Grid.Row="0"

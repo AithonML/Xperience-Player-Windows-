@@ -5,8 +5,10 @@ using Xperience.App.Services;
 using Xperience.App.Services.Audio;
 using Xperience.App.Services.Plugins;
 using Xperience.App.ViewModels;
+using Xperience.App.Widgets;
 using Xperience.Core.Abstractions;
 using Xperience.Core.Updates;
+using Xperience.Core.Widgets;
 
 namespace Xperience.App;
 
@@ -27,6 +29,11 @@ public partial class App : Application
     /// Gets the active main window instance.
     /// </summary>
     public static Window? MainWindowInstance { get; private set; }
+
+    /// <summary>
+    /// Gets or sets an optional widget command passed via CLI arguments when launched from a Windows 11 widget.
+    /// </summary>
+    public static WidgetCommandMessage? PendingWidgetLaunchAction { get; set; }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="App"/> class.
@@ -68,6 +75,7 @@ public partial class App : Application
             // Initialize theme, DSP engine & load saved window bounds early so MainWindow opens at the exact theme and size on frame 0
             await Services.GetRequiredService<IThemeService>().InitializeAsync();
             await Services.GetRequiredService<IAudioDspController>().InitializeAsync();
+            await Services.GetRequiredService<IDataUsageService>().InitializeAsync();
             var storageService = Services.GetRequiredService<IStorageService>();
             var savedWindowBounds = await storageService.LoadAsync<WindowBoundsState>(MainWindow.WindowBoundsSettingKey);
 
@@ -76,6 +84,19 @@ public partial class App : Application
             System.IO.File.AppendAllText(traceLog, $"[{DateTime.Now:O}] Activating MainWindow...\r\n");
             MainWindowInstance.Activate();
             System.IO.File.AppendAllText(traceLog, $"[{DateTime.Now:O}] MainWindow Activated successfully!\r\n");
+
+            // Initialize Windows 11 Widget state bridge & local IPC listener (non-fatal if unpackaged)
+            try
+            {
+                var widgetBridge = Services.GetRequiredService<WidgetStateBridge>();
+                var launchAction = PendingWidgetLaunchAction;
+                PendingWidgetLaunchAction = null;
+                await widgetBridge.InitializeAsync(MainWindowInstance.DispatcherQueue, launchAction);
+            }
+            catch (Exception widgetEx)
+            {
+                _logger.LogWarning(widgetEx, "Windows 11 WidgetStateBridge initialization failed non-fatally.");
+            }
         }
         catch (Exception ex)
         {
@@ -96,6 +117,7 @@ public partial class App : Application
 
         // 2. Core Abstraction Services (Singletons)
         services.AddSingleton<IStorageService, StorageService>();
+        services.AddSingleton<IDataUsageService, DataUsageService>();
         services.AddSingleton<ILocalizationService, LocalizationService>();
         services.AddSingleton<IThemeService, ThemeService>();
         services.AddSingleton<INavigationService, NavigationService>();
@@ -112,15 +134,28 @@ public partial class App : Application
         services.AddSingleton<IAppUpdateService>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<GitHubAppUpdateService>>();
+            string updatesDir = GitHubAppUpdateService.GetDefaultUpdatesDirectory();
+            try
+            {
+                System.IO.Directory.CreateDirectory(updatesDir);
+                WindowsAccountSessionStore.ApplyUserOnlyDirectoryAcl(updatesDir);
+            }
+            catch
+            {
+                // Best-effort directory ACL hardening
+            }
+
             return new GitHubAppUpdateService(
                 currentVersion: WindowsInstallerLauncher.GetCompiledAppVersion(),
                 log: msg => logger.LogInformation("{UpdateMessage}", msg),
+                updatesDirectory: updatesDir,
                 isPackagedApp: WindowsInstallerLauncher.IsPackagedIdentity());
         });
 
-        // 3. Modular Plugins & ViewModels
+        // 3. Modular Plugins, Widgets & ViewModels
         services.AddSingleton<IModulePlugin, SpatialAudioEnhancerPlugin>();
         services.AddSingleton<ShellViewModel>();
+        services.AddSingleton<WidgetStateBridge>();
 
         return services.BuildServiceProvider();
     }
@@ -134,8 +169,18 @@ public partial class App : Application
             {
                 var logDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XperienceMusicPlayer");
                 System.IO.Directory.CreateDirectory(logDir);
-                System.IO.File.AppendAllText(System.IO.Path.Combine(logDir, "crash.log"),
-                    $"[{DateTime.Now:O}] UI Exception: {e.Message}\r\n{e.Exception}\r\n\r\n");
+                var crashLogPath = System.IO.Path.Combine(logDir, "crash.log");
+                string entry = $"[{DateTime.Now:O}] UI Exception: {e.Message}\r\n{e.Exception}\r\n\r\n";
+                const long maxCrashLogBytes = 512 * 1024;
+                if (System.IO.File.Exists(crashLogPath) &&
+                    new System.IO.FileInfo(crashLogPath).Length >= maxCrashLogBytes)
+                {
+                    System.IO.File.WriteAllText(crashLogPath, entry);
+                }
+                else
+                {
+                    System.IO.File.AppendAllText(crashLogPath, entry);
+                }
             }
             catch { }
             e.Handled = true;

@@ -58,4 +58,13 @@ public interface IMusicDownloadService
         CancellationToken cancellationToken = default,
         TrackDownloadCandidate? selectedCandidate = null,
         IProgress<TrackDownloadProgressReport>? detailedProgress = null);
+
+    /// <summary>
+    /// Resolves and caches a direct, verified lossless FLAC stream (<c>fLaC</c> magic-byte verified)
+    /// via the Mornye lossless pipeline (GDStudio / Tidal / Qobuz) for online streaming playback.
+    /// Returns <c>null</c> if no verified lossless FLAC stream is available (caller should fall back to YT Music).
+    /// </summary>
+    Task<ResolvedPlaybackStream?> ResolveDirectFlacStreamAsync(
+        TrackItem track,
+        CancellationToken cancellationToken = default);
 }

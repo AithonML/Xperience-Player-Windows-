@@ -184,7 +184,17 @@ public enum SettingsCategory
     /// <summary>
     /// Application updates, release verification, and installed version details.
     /// </summary>
-    Updates = 5
+    Updates = 5,
+
+    /// <summary>
+    /// Streaming audio quality, FLAC lossless streaming, gapless preloading, and volume playback rules.
+    /// </summary>
+    PlaybackAndQuality = 6,
+
+    /// <summary>
+    /// Network data usage tracking, monthly/daily/weekly limits, per-song breakdown, and download suggestions.
+    /// </summary>
+    DataUsage = 7
 }
 
 /// <summary>
@@ -246,6 +256,27 @@ public enum BackdropMaterialKind
 }
 
 /// <summary>
+/// Appearance synchronization mode allowing the app to follow Windows system theme or force Dark/Light mode.
+/// </summary>
+public enum AppThemePreference
+{
+    /// <summary>
+    /// Automatically synchronizes Dark/Light appearance with Windows system settings.
+    /// </summary>
+    System = 0,
+
+    /// <summary>
+    /// Forces Dark appearance regardless of Windows system settings.
+    /// </summary>
+    Dark = 1,
+
+    /// <summary>
+    /// Forces Light appearance regardless of Windows system settings.
+    /// </summary>
+    Light = 2
+}
+
+/// <summary>
 /// Defines the playback repeat behavior.
 /// </summary>
 public enum PlaybackRepeatMode
@@ -264,4 +295,234 @@ public enum PlaybackRepeatMode
     /// Loops the currently active track indefinitely.
     /// </summary>
     RepeatOne = 2
+}
+
+/// <summary>
+/// Online streaming audio quality tier (parity across Windows and Android).
+/// </summary>
+public enum StreamingAudioQuality
+{
+    /// <summary>
+    /// Low bandwidth streaming (~64 kbps).
+    /// </summary>
+    Low64 = 0,
+
+    /// <summary>
+    /// Regular streaming (~128 kbps).
+    /// </summary>
+    Regular128 = 1,
+
+    /// <summary>
+    /// High streaming (~160 kbps / max YouTube Music audio stream).
+    /// </summary>
+    High160 = 2,
+
+    /// <summary>
+    /// Direct verified lossless FLAC streaming (falls back to High YT Music if unavailable).
+    /// </summary>
+    FlacLossless = 3
+}
+
+/// <summary>
+/// Chart aggregation granularity for Data Usage history.
+/// </summary>
+public enum DataUsageChartGranularity
+{
+    Day = 0,
+    Week = 1,
+    Month = 2
+}
+
+/// <summary>
+/// Date filter window for Data Usage breakdown and per-song analysis.
+/// </summary>
+public enum DataUsageDateFilter
+{
+    AllTime = 0,
+    Day = 1,
+    Week = 2,
+    Month = 3,
+    CustomRange = 4
+}
+
+/// <summary>
+/// Sort order for the Data Usage per-song analysis list.
+/// </summary>
+public enum DataUsageSortOrder
+{
+    HighestConsumption = 0,
+    Date = 1,
+    Alphabetical = 2
+}
+
+/// <summary>
+/// Certified origin source of the audio stream currently loaded in the player.
+/// </summary>
+public enum PlaybackSourceKind
+{
+    /// <summary>
+    /// Local audio file scanned from user directories.
+    /// </summary>
+    Local = 0,
+
+    /// <summary>
+    /// Previously downloaded offline copy of an online track.
+    /// </summary>
+    DownloadedOffline = 1,
+
+    /// <summary>
+    /// YouTube Music studio audio (ATV) stream.
+    /// </summary>
+    YouTubeMusic = 2,
+
+    /// <summary>
+    /// YouTube official music video / video audio stream.
+    /// </summary>
+    YouTubeVideo = 3,
+
+    /// <summary>
+    /// Direct verified FLAC stream resolved via GDStudio / Mornye registry.
+    /// </summary>
+    FlacGdStudio = 4,
+
+    /// <summary>
+    /// Direct verified FLAC stream resolved via Tidal Lossless manifest.
+    /// </summary>
+    FlacTidal = 5,
+
+    /// <summary>
+    /// Direct verified FLAC stream resolved via Qobuz registry endpoint.
+    /// </summary>
+    FlacQobuz = 6
+}
+
+/// <summary>
+/// Accounting period for network data usage limits.
+/// </summary>
+public enum DataUsageLimitPeriod
+{
+    /// <summary>
+    /// Current calendar day (UTC/local day).
+    /// </summary>
+    Daily = 0,
+
+    /// <summary>
+    /// Rolling last 7 days.
+    /// </summary>
+    Weekly = 1,
+
+    /// <summary>
+    /// Current calendar month (default).
+    /// </summary>
+    Monthly = 2,
+
+    /// <summary>
+    /// Cumulative all-time usage since last manual reset.
+    /// </summary>
+    Total = 3
+}
+
+/// <summary>
+/// Network transport category for data usage accounting (Mobile is Android-only).
+/// </summary>
+public enum DataUsageNetworkType
+{
+    /// <summary>
+    /// Wi-Fi or desktop broadband network.
+    /// </summary>
+    Wifi = 0,
+
+    /// <summary>
+    /// Mobile / cellular network (Android-only).
+    /// </summary>
+    Mobile = 1,
+
+    /// <summary>
+    /// Other/unknown metered interface.
+    /// </summary>
+    Other = 2
+}
+
+/// <summary>
+/// Breakdown category of network bytes consumed for a track.
+/// </summary>
+public enum DataUsageCategory
+{
+    /// <summary>
+    /// Streamed audio file/chunks.
+    /// </summary>
+    Audio = 0,
+
+    /// <summary>
+    /// Cover art or album artwork images.
+    /// </summary>
+    Artwork = 1,
+
+    /// <summary>
+    /// External synchronized or static lyrics (.lrc / API payloads).
+    /// </summary>
+    Lyrics = 2,
+
+    /// <summary>
+    /// Apple Music Canvas / animated video artwork.
+    /// </summary>
+    Canvas = 3
+}
+
+/// <summary>
+/// Folder filtering mode for local library scanning.
+/// </summary>
+public enum LocalScanFilterMode
+{
+    /// <summary>
+    /// Scan all configured local directories without blacklist/whitelist filtering.
+    /// </summary>
+    All = 0,
+
+    /// <summary>
+    /// Scan configured directories while excluding folders in the Blacklist.
+    /// </summary>
+    Blacklist = 1,
+
+    /// <summary>
+    /// Scan ONLY folders explicitly included in the Whitelist.
+    /// </summary>
+    Whitelist = 2
+}
+
+/// <summary>
+/// Identifies whether a folder scan rule belongs to the Blacklist or Whitelist.
+/// </summary>
+public enum FolderScanListType
+{
+    /// <summary>
+    /// Folder is excluded when Blacklist mode is active.
+    /// </summary>
+    Blacklist = 0,
+
+    /// <summary>
+    /// Folder is included when Whitelist mode is active.
+    /// </summary>
+    Whitelist = 1
+}
+
+/// <summary>
+/// Controls whether a folder rule applies shallowly (folder only) or deeply (including subfolders).
+/// </summary>
+public enum FolderScanDepthMode
+{
+    /// <summary>
+    /// Inherits the global shallow/deep scan setting.
+    /// </summary>
+    InheritGlobal = 0,
+
+    /// <summary>
+    /// Applies only to files directly inside the folder (no subfolders).
+    /// </summary>
+    Shallow = 1,
+
+    /// <summary>
+    /// Applies recursively to the folder and all nested subfolders.
+    /// </summary>
+    Deep = 2
 }

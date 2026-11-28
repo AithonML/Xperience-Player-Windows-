@@ -32,7 +32,12 @@ public enum SearchSkeletonMode
     /// <summary>
     /// Full search results skeleton: Top Result card, 4 Songs rows, circular Artists row (120x120), and square Albums row (132x132).
     /// </summary>
-    SearchResults
+    SearchResults,
+
+    /// <summary>
+    /// Structured Home discovery skeleton: Top Picks tall editorial cards, Recently Played bento mosaic, and square Albums shelf.
+    /// </summary>
+    HomeFeed
 }
 
 /// <summary>
@@ -280,6 +285,7 @@ public sealed partial class SearchSkeletonControl : UserControl
             SearchSkeletonMode.MoodsAndGenres => 536.0,
             SearchSkeletonMode.MoodDetail => 568.0,
             SearchSkeletonMode.SearchResults => 828.0,
+            SearchSkeletonMode.HomeFeed => 920.0,
             _ => 560.0
         };
 
@@ -425,10 +431,97 @@ public sealed partial class SearchSkeletonControl : UserControl
                 DrawMoodDetailSkeleton(ds, shimmerBrush, padLeft, padTop, contentW);
                 break;
 
+            case SearchSkeletonMode.HomeFeed:
+                DrawHomeFeedSkeleton(ds, shimmerBrush, cardSurface, cardBorder, padLeft, padTop, contentW);
+                break;
+
             case SearchSkeletonMode.SearchResults:
             default:
                 DrawSearchResultsSkeleton(ds, shimmerBrush, cardSurface, cardBorder, padLeft, padTop, contentW);
                 break;
+        }
+    }
+
+    private static void DrawHomeFeedSkeleton(
+        CanvasDrawingSession ds,
+        ICanvasBrush shimmerBrush,
+        Color cardSurface,
+        Color cardBorder,
+        float x,
+        float y,
+        float width)
+    {
+        // Section 1: "Top picks for you" tall editorial cards (204x274, 24px radius)
+        ds.FillRoundedRectangle(x, y, 180f, 20f, 8f, 8f, shimmerBrush);
+        y += 34f;
+
+        const float topPickW = 204f;
+        const float topPickH = 264f;
+        const float gap = 14f;
+        int topPickCount = Math.Max(2, (int)((width + gap) / (topPickW + gap)));
+        for (int i = 0; i < Math.Min(topPickCount, 6); i++)
+        {
+            float cx = x + (i * (topPickW + gap));
+            if (cx + 40f > x + width)
+            {
+                break;
+            }
+
+            ds.FillRoundedRectangle(cx, y, topPickW, topPickH, 24f, 24f, cardSurface);
+            ds.DrawRoundedRectangle(cx, y, topPickW, topPickH, 24f, 24f, cardBorder, 1f);
+            ds.FillRoundedRectangle(cx + 14f, y + topPickH - 58f, 84f, 10f, 5f, 5f, shimmerBrush);
+            ds.FillRoundedRectangle(cx + 14f, y + topPickH - 40f, 148f, 15f, 6f, 6f, shimmerBrush);
+            ds.FillRoundedRectangle(cx + 14f, y + topPickH - 20f, 110f, 10f, 5f, 5f, shimmerBrush);
+        }
+
+        y += topPickH + 30f;
+
+        // Section 2: "Recently Played" bento mosaic cards
+        ds.FillRoundedRectangle(x, y, 160f, 20f, 8f, 8f, shimmerBrush);
+        y += 34f;
+
+        const float bentoColW = 196f;
+        const float bentoH = 240f;
+        int bentoCols = Math.Max(2, (int)((width + 12f) / (bentoColW + 12f)));
+        for (int i = 0; i < Math.Min(bentoCols, 5); i++)
+        {
+            float cx = x + (i * (bentoColW + 12f));
+            if (cx + 40f > x + width)
+            {
+                break;
+            }
+
+            if (i % 2 == 0)
+            {
+                ds.FillRoundedRectangle(cx, y, bentoColW, bentoH, 22f, 22f, shimmerBrush);
+            }
+            else
+            {
+                float halfH = (bentoH - 12f) * 0.5f;
+                ds.FillRoundedRectangle(cx, y, bentoColW, halfH, 18f, 18f, shimmerBrush);
+                ds.FillRoundedRectangle(cx, y + halfH + 12f, bentoColW, halfH, 18f, 18f, shimmerBrush);
+            }
+        }
+
+        y += bentoH + 30f;
+
+        // Section 3: Album recommendations shelf (168x168 square cards + title/artist lines)
+        ds.FillRoundedRectangle(x, y, 210f, 20f, 8f, 8f, shimmerBrush);
+        y += 34f;
+
+        const float albSize = 164f;
+        int albCount = Math.Max(2, (int)((width + gap) / (albSize + gap)));
+        for (int i = 0; i < Math.Min(albCount, 6); i++)
+        {
+            float cx = x + (i * (albSize + gap));
+            if (cx + 40f > x + width)
+            {
+                break;
+            }
+
+            ds.FillRoundedRectangle(cx, y, albSize, albSize, 18f, 18f, shimmerBrush);
+            ds.FillRoundedRectangle(cx, y + albSize + 10f, albSize * 0.78f, 13f, 6f, 6f, shimmerBrush);
+            ds.FillRoundedRectangle(cx, y + albSize + 28f, albSize * 0.52f, 11f, 5f, 5f, shimmerBrush);
         }
     }
 

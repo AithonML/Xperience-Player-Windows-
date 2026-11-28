@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Windows.ApplicationModel;
@@ -43,17 +44,32 @@ public sealed class WindowsInstallerLauncher
         _logger = logger;
         _allowedUpdatesDirectory = Path.GetFullPath(
             string.IsNullOrWhiteSpace(allowedUpdatesDirectory)
-                ? Path.Combine(Path.GetTempPath(), "XperienceMusicPlayer", "Updates")
+                ? GitHubAppUpdateService.GetDefaultUpdatesDirectory()
                 : allowedUpdatesDirectory);
+
+        try
+        {
+            Directory.CreateDirectory(_allowedUpdatesDirectory);
+            WindowsAccountSessionStore.ApplyUserOnlyDirectoryAcl(_allowedUpdatesDirectory);
+        }
+        catch
+        {
+            // Best-effort directory preparation
+        }
     }
 
     /// <summary>
     /// Resolves the compiled semantic version of the running Windows application from
-    /// <see cref="AssemblyInformationalVersionAttribute"/>, MSIX <see cref="Package.Current"/> (if packaged),
+    /// MSIX <see cref="Package.Current"/> (when packaged), <see cref="AssemblyInformationalVersionAttribute"/>,
     /// or <see cref="AssemblyName.Version"/>.
     /// </summary>
     public static SemVersion GetCompiledAppVersion()
     {
+        if (TryGetPackagedVersion(out var packagedVersion) && packagedVersion is not null)
+        {
+            return packagedVersion;
+        }
+
         var assembly = typeof(App).Assembly;
 
         string? informational = assembly
@@ -70,11 +86,6 @@ public sealed class WindowsInstallerLauncher
             }
         }
 
-        if (TryGetPackagedVersion(out var packagedVersion) && packagedVersion is not null)
-        {
-            return packagedVersion;
-        }
-
         var assemblyVersion = assembly.GetName().Version;
         if (assemblyVersion is not null)
         {
@@ -84,7 +95,50 @@ public sealed class WindowsInstallerLauncher
                 Math.Max(0, assemblyVersion.Build));
         }
 
-        return new SemVersion(1, 0, 0);
+        return new SemVersion(0, 2, 0);
+    }
+
+    /// <summary>
+    /// Resolves the formatted display version of the running Windows application (e.g., <c>v0.2.0.0</c>)
+    /// from MSIX <see cref="Package.Current"/> (when packaged), <see cref="AssemblyInformationalVersionAttribute"/>,
+    /// or <see cref="AssemblyName.Version"/>.
+    /// </summary>
+    public static string GetCompiledAppVersionDisplay()
+    {
+        try
+        {
+            var pkgVer = Package.Current.Id.Version;
+            return $"v{pkgVer.Major}.{pkgVer.Minor}.{pkgVer.Build}.{pkgVer.Revision}";
+        }
+        catch
+        {
+            // Unpackaged deployment: fall back to compiled assembly metadata
+        }
+
+        var assembly = typeof(App).Assembly;
+
+        string? informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            string withoutMetadata = informational.Split('+', 2)[0].Trim();
+            if (!string.IsNullOrEmpty(withoutMetadata))
+            {
+                return withoutMetadata.StartsWith('v') || withoutMetadata.StartsWith('V')
+                    ? $"v{withoutMetadata[1..]}"
+                    : $"v{withoutMetadata}";
+            }
+        }
+
+        var assemblyVersion = assembly.GetName().Version;
+        if (assemblyVersion is not null)
+        {
+            return $"v{Math.Max(0, assemblyVersion.Major)}.{Math.Max(0, assemblyVersion.Minor)}.{Math.Max(0, assemblyVersion.Build)}.{Math.Max(0, assemblyVersion.Revision)}";
+        }
+
+        return GetCompiledAppVersion().DisplayTag;
     }
 
     /// <summary>
@@ -116,7 +170,8 @@ public sealed class WindowsInstallerLauncher
     /// </summary>
     public InstallerLaunchResult LaunchVerifiedInstallerAndShutdown(
         string verifiedInstallerPath,
-        Action? beforeWindowClose = null)
+        Action? beforeWindowClose = null,
+        string? expectedSha256 = null)
     {
         if (string.IsNullOrWhiteSpace(verifiedInstallerPath))
         {
@@ -146,6 +201,20 @@ public sealed class WindowsInstallerLauncher
             return new InstallerLaunchResult(false, ErrorMessage: "Verified installer file could not be located.");
         }
 
+        // TOCTOU mitigation: re-verify SHA-256 immediately before Process.Start when expected digest is supplied
+        if (!string.IsNullOrWhiteSpace(expectedSha256))
+        {
+            if (!Sha256ChecksumParser.TryNormalizeSha256(expectedSha256, out string normalizedExpected) ||
+                !VerifyFileSha256Sync(fullPath, normalizedExpected))
+            {
+                _logger.LogError("Pre-launch SHA-256 re-verification failed for installer: {Path}", fullPath);
+                StreamingFileVerifier.TryDeleteFile(fullPath);
+                return new InstallerLaunchResult(
+                    false,
+                    ErrorMessage: "Installer integrity verification failed immediately before launch.");
+            }
+        }
+
         try
         {
             var startInfo = new ProcessStartInfo
@@ -171,6 +240,27 @@ public sealed class WindowsInstallerLauncher
 
         PerformCleanShutdown(beforeWindowClose);
         return new InstallerLaunchResult(true);
+    }
+
+    private static bool VerifyFileSha256Sync(string filePath, string normalizedExpectedHex)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 81920,
+                useAsync: false);
+            byte[] computedBytes = SHA256.HashData(stream);
+            byte[] expectedBytes = Convert.FromHexString(normalizedExpectedHex);
+            return CryptographicOperations.FixedTimeEquals(computedBytes, expectedBytes);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void PerformCleanShutdown(Action? beforeWindowClose)

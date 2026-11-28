@@ -79,7 +79,8 @@ public interface IMediaCatalogService
     Task<ArtistDetailProfile> GetArtistDetailAsync(
         string artistName,
         string? existingAvatarUri = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? explicitBrowseId = null);
 
     /// <summary>
     /// Resolves the complete Album Detail profile including metadata information, ordered album tracks,
@@ -189,6 +190,26 @@ public interface IMediaCatalogService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets the active local scan Blacklist/Whitelist and shallow/deep filter configuration.
+    /// </summary>
+    LocalScanFilterSettings GetLocalScanFilterSettings();
+
+    /// <summary>
+    /// Updates and persists the local scan Blacklist/Whitelist and shallow/deep filter configuration,
+    /// and resynchronizes the local library catalog accordingly.
+    /// </summary>
+    Task UpdateLocalScanFilterSettingsAsync(
+        LocalScanFilterSettings settings,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Rescans all configured local directories honoring the active Blacklist/Whitelist and depth rules.
+    /// </summary>
+    Task RescanLocalLibraryAsync(
+        IProgress<int>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds a local or downloaded offline equivalent track for the specified track (matching by YouTubeVideoId, file path, or Title + Artist).
     /// Used to prioritize offline playback over streaming when a song is already downloaded.
     /// </summary>
@@ -262,5 +283,17 @@ public interface IMediaCatalogService
     /// </summary>
     Task<UserPlaylist> SaveSmartPlaylistToLibraryAsync(
         UserPlaylist smartPlaylist,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Imports or refreshes a playlist from the user's YouTube Music account into the local Playlists library.
+    /// Removing an imported playlist via <see cref="DeletePlaylistAsync"/> only deletes it locally from the app.
+    /// </summary>
+    Task<UserPlaylist> ImportYouTubeMusicPlaylistAsync(
+        YouTubeMusicLibraryPlaylist playlist,
+        IReadOnlyList<TrackItem> tracks,
+        string? accountLabel = null,
+        string? description = null,
+        string? coverUri = null,
         CancellationToken cancellationToken = default);
 }

@@ -51,6 +51,16 @@ public interface IStorageService
     Task<PlayerUiSettings> SetShowFullscreenSeekButtonsAsync(bool show, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Updates and persists GPU visualizer enabled state and selected preset ID atomically
+    /// while preserving all other fields in <see cref="PlayerUiSettings"/>.
+    /// </summary>
+    Task<PlayerUiSettings> SetVisualizerPreferencesAsync(
+        bool isEnabled,
+        string selectedVisualizerId,
+        string? lastActiveVisualizerId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Exports a JSON payload to a specific file path on disk.
     /// </summary>
     /// <typeparam name="T">Type of object to export.</typeparam>

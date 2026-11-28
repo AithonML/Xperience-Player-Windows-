@@ -168,40 +168,71 @@ public sealed class LocalizationService : ILocalizationService
     {
         var baseDir = AppContext.BaseDirectory;
         var stringsRoot = Path.Combine(baseDir, "Strings");
-        if (!Directory.Exists(stringsRoot))
-        {
-            return;
-        }
+        var assembly = typeof(LocalizationService).Assembly;
+        var embeddedNames = assembly.GetManifestResourceNames();
 
         foreach (var lang in SupportedLanguages)
         {
+            XDocument? doc = null;
             var reswPath = Path.Combine(stringsRoot, lang.CultureCode, "Resources.resw");
-            if (!File.Exists(reswPath))
+
+            if (File.Exists(reswPath))
+            {
+                try
+                {
+                    doc = XDocument.Load(reswPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse .resw file at {Path}", reswPath);
+                }
+            }
+
+            if (doc is null)
+            {
+                // Packaged MSIX fallback: load embedded .resw compiled into Xperience.App.dll
+                string cultureTokenDot = $".{lang.CultureCode}.";
+                string cultureTokenUnderscore = $".{lang.CultureCode.Replace('-', '_')}.";
+                string? resourceName = embeddedNames.FirstOrDefault(n =>
+                    n.EndsWith("Resources.resw", StringComparison.OrdinalIgnoreCase) &&
+                    (n.Contains(cultureTokenDot, StringComparison.OrdinalIgnoreCase) ||
+                     n.Contains(cultureTokenUnderscore, StringComparison.OrdinalIgnoreCase)));
+
+                if (resourceName is not null)
+                {
+                    try
+                    {
+                        using var stream = assembly.GetManifestResourceStream(resourceName);
+                        if (stream is not null)
+                        {
+                            doc = XDocument.Load(stream);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse embedded .resw resource {ResourceName}", resourceName);
+                    }
+                }
+            }
+
+            if (doc is null)
             {
                 continue;
             }
 
-            try
-            {
-                var doc = XDocument.Load(reswPath);
-                var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                foreach (var dataNode in doc.Descendants("data"))
+            foreach (var dataNode in doc.Descendants("data"))
+            {
+                var nameAttr = dataNode.Attribute("name")?.Value;
+                var valElem = dataNode.Element("value")?.Value;
+                if (!string.IsNullOrWhiteSpace(nameAttr) && valElem is not null)
                 {
-                    var nameAttr = dataNode.Attribute("name")?.Value;
-                    var valElem = dataNode.Element("value")?.Value;
-                    if (!string.IsNullOrWhiteSpace(nameAttr) && valElem is not null)
-                    {
-                        dict[nameAttr] = valElem;
-                    }
+                    dict[nameAttr] = valElem;
                 }
+            }
 
-                _cultureDictionaries[lang.CultureCode] = dict;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse .resw file at {Path}", reswPath);
-            }
+            _cultureDictionaries[lang.CultureCode] = dict;
         }
     }
 }

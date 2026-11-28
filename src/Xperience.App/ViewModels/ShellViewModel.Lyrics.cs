@@ -318,6 +318,7 @@ public sealed partial class ShellViewModel
                 if (hasReal)
                 {
                     ApplyResolvedLyricsOnUiThread(track, resolvedLines, providerName);
+                    RecordExternalLyricsDataUsage(track, resolvedLines, providerName);
                 }
                 else
                 {

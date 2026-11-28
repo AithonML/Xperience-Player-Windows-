@@ -8,6 +8,7 @@ using Xperience.Core.Collections;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 using YoutubeExplode.Videos.Streams;
 
 namespace Xperience.App.Services;
@@ -61,7 +62,8 @@ public sealed partial class YouTubeMusicService
         string Title,
         string Artist,
         string ThumbnailUri,
-        TimeSpan Duration);
+        TimeSpan Duration,
+        IReadOnlyList<MusicVideoTimeSegment>? Segments = null);
 
     private readonly BoundedLruCache<string, CachedMusicVideoEntry> _resolvedMusicVideoCache =
         new(maxCapacity: 40, comparer: StringComparer.OrdinalIgnoreCase);
@@ -246,7 +248,8 @@ public sealed partial class YouTubeMusicService
         string targetArtist,
         List<TrackItem> results,
         HashSet<string> seenIds,
-        int limit)
+        int limit,
+        bool strictOmvOnly = false)
     {
         if (results.Count >= limit)
         {
@@ -257,7 +260,7 @@ public sealed partial class YouTubeMusicService
         {
             if (element.TryGetProperty("musicResponsiveListItemRenderer", out var renderer))
             {
-                var parsed = TryParseOfficialVideoResponsiveItem(renderer, targetArtist, (uint)(results.Count + 1));
+                var parsed = TryParseOfficialVideoResponsiveItem(renderer, targetArtist, (uint)(results.Count + 1), strictOmvOnly);
                 if (parsed is not null && seenIds.Add(parsed.YouTubeVideoId))
                 {
                     results.Add(parsed);
@@ -268,7 +271,7 @@ public sealed partial class YouTubeMusicService
 
             foreach (var prop in element.EnumerateObject())
             {
-                CollectOfficialVideoRenderersRecursive(prop.Value, targetArtist, results, seenIds, limit);
+                CollectOfficialVideoRenderersRecursive(prop.Value, targetArtist, results, seenIds, limit, strictOmvOnly);
                 if (results.Count >= limit)
                 {
                     return;
@@ -279,7 +282,7 @@ public sealed partial class YouTubeMusicService
         {
             foreach (var item in element.EnumerateArray())
             {
-                CollectOfficialVideoRenderersRecursive(item, targetArtist, results, seenIds, limit);
+                CollectOfficialVideoRenderersRecursive(item, targetArtist, results, seenIds, limit, strictOmvOnly);
                 if (results.Count >= limit)
                 {
                     return;
@@ -291,8 +294,24 @@ public sealed partial class YouTubeMusicService
     private static TrackItem? TryParseOfficialVideoResponsiveItem(
         JsonElement renderer,
         string defaultArtist,
-        uint trackNumber)
+        uint trackNumber,
+        bool strictOmvOnly = false)
     {
+        string musicVideoType = ExtractMusicVideoType(renderer);
+        if (strictOmvOnly &&
+            !string.Equals(musicVideoType, "MUSIC_VIDEO_TYPE_OMV", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        bool isExplicitlyNonOfficial =
+            string.Equals(musicVideoType, "MUSIC_VIDEO_TYPE_UGC", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(musicVideoType, "MUSIC_VIDEO_TYPE_ATV", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(musicVideoType, "MUSIC_VIDEO_TYPE_PODCAST_EPISODE", StringComparison.OrdinalIgnoreCase);
+        if (isExplicitlyNonOfficial)
+        {
+            return null;
+        }
         string? videoId = null;
         if (renderer.TryGetProperty("playlistItemData", out var pid) &&
             pid.TryGetProperty("videoId", out var vidProp))
@@ -624,7 +643,7 @@ public sealed partial class YouTubeMusicService
 
         try
         {
-            // 1. Collect ranked candidate official music video IDs (OMV) so if #1 is blocked/unavailable, #2/#3 succeed
+            // 1. Collect verified Official Music Video (OMV) candidates only (no UGC/static-ATV fallbacks)
             var candidates = await FindCandidateMusicVideosAsync(track, cancellationToken).ConfigureAwait(false);
             if (candidates.Count == 0)
             {
@@ -648,13 +667,19 @@ public sealed partial class YouTubeMusicService
                     ? cand.ThumbnailUri
                     : $"https://i.ytimg.com/vi/{cand.VideoId}/hqdefault.jpg";
 
+                string cleanSongVid = !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
+                    ? ExtractCleanVideoId(track.YouTubeVideoId)
+                    : string.Empty;
+
                 var result = new ResolvedMusicVideoStream(
                     VideoId: cand.VideoId,
                     StreamUri: playableStreamUri,
                     Title: string.IsNullOrWhiteSpace(cand.Title) ? track.Title : cand.Title,
                     Artist: string.IsNullOrWhiteSpace(cand.Artist) ? track.Artist : cand.Artist,
                     ThumbnailUri: thumbnailUri,
-                    Duration: cand.Duration.TotalSeconds > 10 ? cand.Duration : track.Duration);
+                    Duration: cand.Duration.TotalSeconds > 10 ? cand.Duration : track.Duration,
+                    SongVideoId: cleanSongVid,
+                    Segments: cand.Segments);
 
                 var expiry = playableStreamUri.StartsWith("http", StringComparison.OrdinalIgnoreCase)
                     ? DateTimeOffset.UtcNow.AddHours(3)
@@ -678,6 +703,58 @@ public sealed partial class YouTubeMusicService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<OfficialMusicVideoMetadata?> ResolveOfficialMusicVideoMetadataAsync(
+        TrackItem track,
+        CancellationToken cancellationToken = default)
+    {
+        if (track is null || string.IsNullOrWhiteSpace(track.Title) || track.Id == "empty_state_track")
+        {
+            return null;
+        }
+
+        string cacheKey = BuildMusicVideoCacheKey(track);
+        if (_officialVideoMetadataCache.TryGet(cacheKey, out var cachedMeta))
+        {
+            return cachedMeta;
+        }
+
+        try
+        {
+            var candidates = await FindCandidateMusicVideosAsync(track, cancellationToken).ConfigureAwait(false);
+            if (candidates.Count == 0)
+            {
+                _officialVideoMetadataCache.Set(cacheKey, null);
+                return null;
+            }
+
+            var best = candidates[0];
+            string cleanSongVid = !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
+                ? ExtractCleanVideoId(track.YouTubeVideoId)
+                : string.Empty;
+            var meta = new OfficialMusicVideoMetadata(
+                SongVideoId: cleanSongVid,
+                OfficialVideoId: best.VideoId,
+                Segments: best.Segments ?? []);
+
+            _officialVideoMetadataCache.Set(cacheKey, meta);
+            if (!string.IsNullOrWhiteSpace(best.VideoId))
+            {
+                track.OfficialVideoId = best.VideoId;
+            }
+
+            return meta;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task<List<VideoSearchCandidate>> FindCandidateMusicVideosAsync(
         TrackItem track,
         CancellationToken cancellationToken)
@@ -685,7 +762,7 @@ public sealed partial class YouTubeMusicService
         var results = new List<VideoSearchCandidate>();
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
 
-        void TryAdd(string? rawId, string title, string artist, string thumb, TimeSpan dur)
+        void TryAdd(string? rawId, string title, string artist, string thumb, TimeSpan dur, IReadOnlyList<MusicVideoTimeSegment>? segments = null)
         {
             if (string.IsNullOrWhiteSpace(rawId))
             {
@@ -698,7 +775,7 @@ public sealed partial class YouTubeMusicService
                 return;
             }
 
-            results.Add(new VideoSearchCandidate(clean, title, artist, thumb, dur));
+            results.Add(new VideoSearchCandidate(clean, title, artist, thumb, dur, segments));
         }
 
         string cleanTrackVid = !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
@@ -708,52 +785,73 @@ public sealed partial class YouTubeMusicService
         // 1. Track is itself an Official Video item
         if (track.IsOfficialVideoItem && !string.IsNullOrWhiteSpace(cleanTrackVid))
         {
-            TryAdd(cleanTrackVid, track.Title, track.Artist, track.CoverArtUri, track.Duration);
+            var selfCounterpart = await TryFindCounterpartViaNextAsync(cleanTrackVid, sourceIsOmv: true, cancellationToken)
+                .ConfigureAwait(false);
+            TryAdd(cleanTrackVid, track.Title, track.Artist, track.CoverArtUri, track.Duration, selfCounterpart?.Segments);
+            return results;
         }
 
-        // 2. Track already carries a pre-linked OfficialVideoId
-        if (!string.IsNullOrWhiteSpace(track.OfficialVideoId))
-        {
-            TryAdd(track.OfficialVideoId, track.Title, track.Artist, track.CoverArtUri, track.Duration);
-        }
-
-        // 3. Reverse ATV counterpart map (OMV -> ATV)
+        // 2. Native YouTube Music /next counterpartRenderer + segmentMap lookup (authoritative Song <-> OMV link + timing offsets)
+        bool confirmedNoOfficialVideoByNext = false;
         if (!string.IsNullOrWhiteSpace(cleanTrackVid))
         {
-            EnsureAtvCounterpartCacheLoaded();
-            foreach (var kvp in _atvCounterpartCache.Snapshot())
+            var nextCounterpart = await TryFindCounterpartViaNextAsync(cleanTrackVid, sourceIsOmv: false, cancellationToken)
+                .ConfigureAwait(false);
+            if (nextCounterpart is not null)
             {
-                if (string.Equals(kvp.Value, cleanTrackVid, StringComparison.Ordinal) &&
-                    !string.Equals(kvp.Key, cleanTrackVid, StringComparison.Ordinal))
+                if (!string.IsNullOrWhiteSpace(nextCounterpart.OfficialVideoId) &&
+                    !string.Equals(nextCounterpart.OfficialVideoId, cleanTrackVid, StringComparison.Ordinal))
                 {
-                    TryAdd(kvp.Key, track.Title, track.Artist, track.CoverArtUri, track.Duration);
-                    break;
+                    _officialOmvCounterpartCache.Set(cleanTrackVid, nextCounterpart.OfficialVideoId);
+                    TryAdd(
+                        nextCounterpart.OfficialVideoId,
+                        track.Title,
+                        track.Artist,
+                        $"https://i.ytimg.com/vi/{nextCounterpart.OfficialVideoId}/hqdefault.jpg",
+                        track.Duration,
+                        nextCounterpart.Segments);
+                }
+                else if (nextCounterpart.SourceTrackFoundInNext)
+                {
+                    // YouTube Music explicitly returned this exact track without an OMV counterpart wrapper:
+                    // match YT Music behavior strictly and do NOT fall back to heuristic search.
+                    confirmedNoOfficialVideoByNext = true;
                 }
             }
         }
 
-        // 4. Native YouTube Music /next counterpartRenderer lookup (exact Song <-> Video link when provided by YTM)
-        if (results.Count == 0 && !string.IsNullOrWhiteSpace(cleanTrackVid))
+        // 3. Track already carries a pre-linked OfficialVideoId (e.g. from Album OMV browse) or verified OMV map
+        if (results.Count == 0 && !confirmedNoOfficialVideoByNext && !string.IsNullOrWhiteSpace(track.OfficialVideoId))
         {
-            string? counterpartVid = await TryFindCounterpartVideoIdViaNextAsync(cleanTrackVid, cancellationToken)
-                .ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(counterpartVid) &&
-                !string.Equals(counterpartVid, cleanTrackVid, StringComparison.Ordinal))
+            string cleanOfficial = ExtractCleanVideoId(track.OfficialVideoId);
+            if (!string.IsNullOrWhiteSpace(cleanOfficial) &&
+                !string.Equals(cleanOfficial, cleanTrackVid, StringComparison.Ordinal))
             {
-                TryAdd(counterpartVid, track.Title, track.Artist, $"https://i.ytimg.com/vi/{counterpartVid}/hqdefault.jpg", track.Duration);
+                TryAdd(cleanOfficial, track.Title, track.Artist, track.CoverArtUri, track.Duration);
             }
         }
 
-        // 5. YouTube Music search with Videos filter ("official music video" + clean fallback)
-        if (results.Count == 0)
+        if (results.Count == 0 &&
+            !confirmedNoOfficialVideoByNext &&
+            !string.IsNullOrWhiteSpace(cleanTrackVid) &&
+            _officialOmvCounterpartCache.TryGet(cleanTrackVid, out string? cachedOmvVid) &&
+            !string.IsNullOrWhiteSpace(cachedOmvVid) &&
+            !string.Equals(cachedOmvVid, cleanTrackVid, StringComparison.Ordinal))
+        {
+            TryAdd(cachedOmvVid, track.Title, track.Artist, track.CoverArtUri, track.Duration);
+        }
+
+        // 4. Strict YouTube Music Videos search (used only for local tracks without a YTM videoId,
+        // or when /next was unreachable): ONLY MUSIC_VIDEO_TYPE_OMV items with verified exact title + artist match.
+        if (results.Count == 0 && !confirmedNoOfficialVideoByNext)
         {
             string primaryArtist = RecentAlbumItem.ExtractPrimaryArtist(track.Artist);
             string cleanTitle = CleanTitleForAtvSearch(track.Title, primaryArtist);
             string effectiveTitle = string.IsNullOrWhiteSpace(cleanTitle) ? track.Title.Trim() : cleanTitle;
 
             string[] queries = string.IsNullOrWhiteSpace(primaryArtist)
-                ? [$"{effectiveTitle} official music video", effectiveTitle]
-                : [$"{primaryArtist} {effectiveTitle} official music video", $"{primaryArtist} {effectiveTitle} official video"];
+                ? [$"{effectiveTitle} official music video"]
+                : [$"{primaryArtist} {effectiveTitle} official music video", $"{primaryArtist} {effectiveTitle}"];
 
             var videoCandidates = new List<TrackItem>();
             var searchSeen = new HashSet<string>(StringComparer.Ordinal);
@@ -775,7 +873,7 @@ public sealed partial class YouTubeMusicService
 
                 if (searchDoc is not null)
                 {
-                    CollectOfficialVideoRenderersRecursive(searchDoc.RootElement, primaryArtist, videoCandidates, searchSeen, 8);
+                    CollectOfficialVideoRenderersRecursive(searchDoc.RootElement, primaryArtist, videoCandidates, searchSeen, 8, strictOmvOnly: true);
                 }
 
                 if (videoCandidates.Count > 0)
@@ -784,35 +882,52 @@ public sealed partial class YouTubeMusicService
                 }
             }
 
-            foreach (var ranked in RankMatchingVideoCandidates(track, videoCandidates).Take(3))
+            foreach (var ranked in RankMatchingVideoCandidates(track, videoCandidates).Take(2))
             {
-                TryAdd(ranked.YouTubeVideoId, ranked.Title, ranked.Artist, ranked.CoverArtUri, ranked.Duration);
-            }
-        }
+                if (!string.Equals(ranked.YouTubeVideoId, cleanTrackVid, StringComparison.Ordinal))
+                {
+                    IReadOnlyList<MusicVideoTimeSegment>? segments = null;
+                    if (!string.IsNullOrWhiteSpace(ranked.YouTubeVideoId))
+                    {
+                        var omvNext = await TryFindCounterpartViaNextAsync(ranked.YouTubeVideoId, sourceIsOmv: true, cancellationToken)
+                            .ConfigureAwait(false);
+                        segments = omvNext?.Segments;
+                        if (!string.IsNullOrWhiteSpace(cleanTrackVid))
+                        {
+                            _officialOmvCounterpartCache.Set(cleanTrackVid, ranked.YouTubeVideoId);
+                        }
+                    }
 
-        // 6. Final fallback: track's own YouTube videoId (if present)
-        if (!string.IsNullOrWhiteSpace(cleanTrackVid))
-        {
-            TryAdd(cleanTrackVid, track.Title, track.Artist, track.CoverArtUri, track.Duration);
+                    TryAdd(ranked.YouTubeVideoId, ranked.Title, ranked.Artist, ranked.CoverArtUri, ranked.Duration, segments);
+                }
+            }
         }
 
         return results;
     }
 
-    private async Task<string?> TryFindCounterpartVideoIdViaNextAsync(
+    private sealed record CounterpartNextLookup(
+        string? OfficialVideoId,
+        IReadOnlyList<MusicVideoTimeSegment> Segments,
+        bool SourceTrackFoundInNext);
+
+    private async Task<CounterpartNextLookup?> TryFindCounterpartViaNextAsync(
         string trackVideoId,
+        bool sourceIsOmv,
         CancellationToken cancellationToken)
     {
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(2200));
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(2600));
 
             var payload = new Dictionary<string, object?>
             {
                 ["context"] = BuildWebRemixContext(),
                 ["videoId"] = trackVideoId,
-                ["isAudioOnly"] = true
+                ["playlistId"] = $"RDAMVM{trackVideoId}",
+                ["enablePersistentPlaylistPanel"] = true,
+                ["isAudioOnly"] = false
             };
 
             using var doc = await ExecuteInnerTubePostDocAsync(
@@ -825,7 +940,21 @@ public sealed partial class YouTubeMusicService
                 return null;
             }
 
-            return FindCounterpartVideoIdRecursive(doc.RootElement, trackVideoId);
+            bool sourceTrackSeenWithoutCounterpart = false;
+            var found = FindOfficialCounterpartRecursive(
+                doc.RootElement,
+                trackVideoId,
+                sourceIsOmv,
+                ref sourceTrackSeenWithoutCounterpart);
+
+            if (found is not null)
+            {
+                return found;
+            }
+
+            return sourceTrackSeenWithoutCounterpart
+                ? new CounterpartNextLookup(null, [], SourceTrackFoundInNext: true)
+                : null;
         }
         catch
         {
@@ -833,23 +962,105 @@ public sealed partial class YouTubeMusicService
         }
     }
 
-    private static string? FindCounterpartVideoIdRecursive(JsonElement element, string sourceVideoId)
+    private static CounterpartNextLookup? FindOfficialCounterpartRecursive(
+        JsonElement element,
+        string sourceVideoId,
+        bool sourceIsOmv,
+        ref bool sourceTrackSeenWithoutCounterpart)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
-            if (element.TryGetProperty("counterpart", out var counterpartEl))
+            if (element.TryGetProperty("playlistPanelVideoWrapperRenderer", out var wrapper))
             {
-                string? vid = FindFirstPropertyString(counterpartEl, "videoId");
-                if (!string.IsNullOrWhiteSpace(vid) && !string.Equals(vid, sourceVideoId, StringComparison.Ordinal))
+                string primaryVid = wrapper.TryGetProperty("primaryRenderer", out var primaryEl)
+                    ? (FindFirstPropertyString(primaryEl, "videoId") ?? string.Empty)
+                    : string.Empty;
+                string primaryMvt = wrapper.TryGetProperty("primaryRenderer", out var pMvtEl)
+                    ? ExtractMusicVideoType(pMvtEl)
+                    : string.Empty;
+
+                if (wrapper.TryGetProperty("counterpart", out var counterpartArr) &&
+                    counterpartArr.ValueKind == JsonValueKind.Array &&
+                    counterpartArr.GetArrayLength() > 0)
                 {
-                    return vid;
+                    var cpEntry = counterpartArr[0];
+                    string cpVid = cpEntry.TryGetProperty("counterpartRenderer", out var cpRenderer)
+                        ? (FindFirstPropertyString(cpRenderer, "videoId") ?? string.Empty)
+                        : (FindFirstPropertyString(cpEntry, "videoId") ?? string.Empty);
+                    string cpMvt = cpEntry.TryGetProperty("counterpartRenderer", out var cpMvtEl)
+                        ? ExtractMusicVideoType(cpMvtEl)
+                        : ExtractMusicVideoType(cpEntry);
+
+                    bool primaryMatchesSource = string.Equals(primaryVid, sourceVideoId, StringComparison.Ordinal);
+                    bool counterpartMatchesSource = string.Equals(cpVid, sourceVideoId, StringComparison.Ordinal);
+
+                    // CRITICAL: /next radio queues include 20+ other tracks by the same/similar artist.
+                    // Never accept a counterpart wrapper belonging to a different track in the queue!
+                    if (!primaryMatchesSource && !counterpartMatchesSource)
+                    {
+                        return null;
+                    }
+
+                    bool isCounterpartOmv = string.Equals(cpMvt, "MUSIC_VIDEO_TYPE_OMV", StringComparison.OrdinalIgnoreCase);
+                    bool isPrimaryOmv = string.Equals(primaryMvt, "MUSIC_VIDEO_TYPE_OMV", StringComparison.OrdinalIgnoreCase);
+                    bool isCounterpartUgc = string.Equals(cpMvt, "MUSIC_VIDEO_TYPE_UGC", StringComparison.OrdinalIgnoreCase);
+                    bool isCounterpartAtv = string.Equals(cpMvt, "MUSIC_VIDEO_TYPE_ATV", StringComparison.OrdinalIgnoreCase);
+
+                    if (primaryMatchesSource)
+                    {
+                        if (sourceIsOmv || isPrimaryOmv)
+                        {
+                            var segments = ParseSegmentMap(cpEntry, primaryIsOmv: true);
+                            return new CounterpartNextLookup(primaryVid, segments, SourceTrackFoundInNext: true);
+                        }
+
+                        if (!isCounterpartUgc && !isCounterpartAtv &&
+                            (isCounterpartOmv || string.IsNullOrWhiteSpace(cpMvt)) &&
+                            !string.IsNullOrWhiteSpace(cpVid) &&
+                            !string.Equals(cpVid, sourceVideoId, StringComparison.Ordinal))
+                        {
+                            var segments = ParseSegmentMap(cpEntry, primaryIsOmv: false);
+                            return new CounterpartNextLookup(cpVid, segments, SourceTrackFoundInNext: true);
+                        }
+
+                        sourceTrackSeenWithoutCounterpart = true;
+                        return null;
+                    }
+
+                    // counterpartMatchesSource == true
+                    if (isPrimaryOmv && !string.IsNullOrWhiteSpace(primaryVid))
+                    {
+                        var segments = ParseSegmentMap(cpEntry, primaryIsOmv: true);
+                        return new CounterpartNextLookup(primaryVid, segments, SourceTrackFoundInNext: true);
+                    }
+
+                    sourceTrackSeenWithoutCounterpart = true;
+                    return null;
                 }
+
+                if (string.Equals(primaryVid, sourceVideoId, StringComparison.Ordinal))
+                {
+                    sourceTrackSeenWithoutCounterpart = true;
+                }
+
+                return null;
+            }
+
+            if (element.TryGetProperty("playlistPanelVideoRenderer", out var panelVideoRenderer))
+            {
+                string panelVid = FindFirstPropertyString(panelVideoRenderer, "videoId") ?? string.Empty;
+                if (string.Equals(panelVid, sourceVideoId, StringComparison.Ordinal))
+                {
+                    sourceTrackSeenWithoutCounterpart = true;
+                }
+
+                return null;
             }
 
             foreach (var prop in element.EnumerateObject())
             {
-                var found = FindCounterpartVideoIdRecursive(prop.Value, sourceVideoId);
-                if (!string.IsNullOrWhiteSpace(found))
+                var found = FindOfficialCounterpartRecursive(prop.Value, sourceVideoId, sourceIsOmv, ref sourceTrackSeenWithoutCounterpart);
+                if (found is not null)
                 {
                     return found;
                 }
@@ -859,8 +1070,8 @@ public sealed partial class YouTubeMusicService
         {
             foreach (var item in element.EnumerateArray())
             {
-                var found = FindCounterpartVideoIdRecursive(item, sourceVideoId);
-                if (!string.IsNullOrWhiteSpace(found))
+                var found = FindOfficialCounterpartRecursive(item, sourceVideoId, sourceIsOmv, ref sourceTrackSeenWithoutCounterpart);
+                if (found is not null)
                 {
                     return found;
                 }
@@ -868,6 +1079,60 @@ public sealed partial class YouTubeMusicService
         }
 
         return null;
+    }
+
+    private static List<MusicVideoTimeSegment> ParseSegmentMap(JsonElement counterpartEntry, bool primaryIsOmv)
+    {
+        var segments = new List<MusicVideoTimeSegment>();
+        if (!counterpartEntry.TryGetProperty("segmentMap", out var segMapObj) ||
+            !segMapObj.TryGetProperty("segment", out var segArray) ||
+            segArray.ValueKind != JsonValueKind.Array)
+        {
+            return segments;
+        }
+
+        static long ReadMs(JsonElement obj, string propName)
+        {
+            if (!obj.TryGetProperty(propName, out var prop))
+            {
+                return 0L;
+            }
+
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out long num))
+            {
+                return Math.Max(0L, num);
+            }
+
+            if (prop.ValueKind == JsonValueKind.String &&
+                long.TryParse(prop.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long strNum))
+            {
+                return Math.Max(0L, strNum);
+            }
+
+            return 0L;
+        }
+
+        foreach (var segEl in segArray.EnumerateArray())
+        {
+            if (segEl.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            long primaryStart = ReadMs(segEl, "primaryVideoStartTimeMilliseconds");
+            long counterpartStart = ReadMs(segEl, "counterpartVideoStartTimeMilliseconds");
+            long duration = ReadMs(segEl, "durationMilliseconds");
+            if (duration <= 0L)
+            {
+                continue;
+            }
+
+            segments.Add(primaryIsOmv
+                ? new MusicVideoTimeSegment(SongStartMs: counterpartStart, VideoStartMs: primaryStart, DurationMs: duration)
+                : new MusicVideoTimeSegment(SongStartMs: primaryStart, VideoStartMs: counterpartStart, DurationMs: duration));
+        }
+
+        return segments;
     }
 
     private static List<TrackItem> RankMatchingVideoCandidates(TrackItem track, IReadOnlyList<TrackItem> candidates)
@@ -881,13 +1146,43 @@ public sealed partial class YouTubeMusicService
         string cleanTargetTitle = CleanTitleForAtvSearch(track.Title, cleanTargetArtist);
         string normTargetTitle = NormalizeMatchText(cleanTargetTitle);
         string normTargetArtist = NormalizeMatchText(cleanTargetArtist);
+        string trackTitleLower = (track.Title ?? string.Empty).ToLowerInvariant();
+
+        string[] disallowedUnlessInTrack =
+        [
+            "sub español", "subtitulado", "lyric", "letra", "karaoke", "cover",
+            "nightcore", "slowed", "sped up", "reaction", "interview", "audio only",
+            "live", "acoustic", "acústico", "remix", "instrumental", "teaser", "trailer",
+            "behind the scenes", "making of", "visualizer"
+        ];
 
         var scored = new List<(TrackItem Item, int Score)>();
 
         for (int i = 0; i < candidates.Count; i++)
         {
             var cand = candidates[i];
+            if (!cand.IsOfficialVideoItem)
+            {
+                continue;
+            }
+
             string rawTitleLower = (cand.Title ?? string.Empty).ToLowerInvariant();
+            bool rejectedVariant = false;
+            foreach (string keyword in disallowedUnlessInTrack)
+            {
+                if (rawTitleLower.Contains(keyword, StringComparison.Ordinal) &&
+                    !trackTitleLower.Contains(keyword, StringComparison.Ordinal))
+                {
+                    rejectedVariant = true;
+                    break;
+                }
+            }
+
+            if (rejectedVariant)
+            {
+                continue;
+            }
+
             string normCandTitle = NormalizeMatchText(CleanTitleForAtvSearch(cand.Title ?? string.Empty, cleanTargetArtist));
             string normCandArtist = NormalizeMatchText(cand.Artist ?? string.Empty);
 
@@ -901,8 +1196,8 @@ public sealed partial class YouTubeMusicService
                     score += 120;
                     titleMatched = true;
                 }
-                else if (normCandTitle.Contains(normTargetTitle, StringComparison.Ordinal) ||
-                         normTargetTitle.Contains(normCandTitle, StringComparison.Ordinal))
+                else if (normTargetTitle.Length >= 4 &&
+                         normCandTitle.StartsWith(normTargetTitle + " ", StringComparison.Ordinal))
                 {
                     score += 80;
                     titleMatched = true;
@@ -914,25 +1209,33 @@ public sealed partial class YouTubeMusicService
                 continue;
             }
 
+            bool artistMatched = false;
             if (!string.IsNullOrWhiteSpace(normTargetArtist) && !string.IsNullOrWhiteSpace(normCandArtist))
             {
                 if (string.Equals(normCandArtist, normTargetArtist, StringComparison.Ordinal))
                 {
                     score += 80;
+                    artistMatched = true;
                 }
                 else if (normCandArtist.Contains(normTargetArtist, StringComparison.Ordinal) ||
                          normTargetArtist.Contains(normCandArtist, StringComparison.Ordinal))
                 {
                     score += 55;
-                }
-                else
-                {
-                    score -= 35;
+                    artistMatched = true;
                 }
             }
+            else if (string.IsNullOrWhiteSpace(normTargetArtist))
+            {
+                artistMatched = true;
+            }
 
-            // Reward genuine official music videos and popular artist uploads
-            if (rawTitleLower.Contains("official music video") || rawTitleLower.Contains("official video"))
+            if (!artistMatched)
+            {
+                continue;
+            }
+
+            if (rawTitleLower.Contains("official music video", StringComparison.Ordinal) ||
+                rawTitleLower.Contains("official video", StringComparison.Ordinal))
             {
                 score += 30;
             }
@@ -946,24 +1249,16 @@ public sealed partial class YouTubeMusicService
                 score += 15;
             }
 
-            // Penalize fan re-uploads, lyric/subtitled videos, covers, nightcore, reactions, and interviews
-            if (rawTitleLower.Contains("sub español") || rawTitleLower.Contains("subtitulado") ||
-                rawTitleLower.Contains("lyric") || rawTitleLower.Contains("letra") ||
-                rawTitleLower.Contains("karaoke") || rawTitleLower.Contains("cover") ||
-                rawTitleLower.Contains("nightcore") || rawTitleLower.Contains("slowed") ||
-                rawTitleLower.Contains("sped up") || rawTitleLower.Contains("reaction") ||
-                rawTitleLower.Contains("interview") || rawTitleLower.Contains("audio only"))
-            {
-                score -= 75;
-            }
-
             score += Math.Max(0, 12 - (i * 2));
-            scored.Add((cand, score));
+            if (score >= 175)
+            {
+                scored.Add((cand, score));
+            }
         }
 
         if (scored.Count == 0)
         {
-            return [candidates[0]];
+            return [];
         }
 
         return scored
@@ -1446,9 +1741,10 @@ public sealed partial class YouTubeMusicService
 
                 var (progressiveCandidate, adaptiveCandidate) = PickBestVideoMp4Candidates(streamingData);
 
-                string? downloadCookie = spec.SendOriginOnDownload
+                string? rawDownloadCookie = spec.SendOriginOnDownload
                     ? (useAuth && IsAuthenticated ? YouTubeAuthHelper.EnsureConsentCookie(_cookieHeader) : anonCookies)
                     : null;
+                string? downloadCookie = YouTubeSecurityPolicy.StripAuthCookiesForCdn(rawDownloadCookie);
 
                 async Task<ResolvedAudioStream?> MaterializeCandidateAsync(AudioFormatCandidate? cand)
                 {
@@ -1462,7 +1758,8 @@ public sealed partial class YouTubeMusicService
                         ? await _scriptResolver.TransformStreamUrlAsync(cand.Url, cand.Sp, cand.Signature, cancellationToken).ConfigureAwait(false)
                         : cand.Url;
 
-                    if (string.IsNullOrWhiteSpace(resolvedUrl))
+                    if (string.IsNullOrWhiteSpace(resolvedUrl) ||
+                        !YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(resolvedUrl))
                     {
                         return null;
                     }

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Graphics.Canvas;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -10,6 +11,7 @@ using Windows.Graphics;
 using Windows.UI;
 using WinRT.Interop;
 using Xperience.App.Controls;
+using Xperience.App.Services;
 using Xperience.Core.Abstractions;
 using Xperience.Core.Domain.Models;
 
@@ -37,6 +39,7 @@ public sealed partial class MainWindow : Window
     private readonly IThemeService? _themeService;
     private readonly IStorageService? _storageService;
     private readonly CancellationTokenSource _splashCts = new();
+    private TaskbarThumbnailToolbarService? _taskbarToolbarService;
     private AnimatedSplashControl? _splashOverlay;
     private CancellationTokenSource? _boundsSaveDebounceCts;
     private AppWindow? _appWindow;
@@ -62,9 +65,41 @@ public sealed partial class MainWindow : Window
         }
 
         ConfigureWindowAppearance(initialBounds);
+        InitializeTaskbarThumbnailToolbar();
         InitializeSplashThemeAndSync();
 
         Closed += OnWindowClosed;
+    }
+
+    private void InitializeTaskbarThumbnailToolbar()
+    {
+        try
+        {
+            IntPtr hWnd = WindowNative.GetWindowHandle(this);
+            if (hWnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            IAudioPlayerService? audioPlayer = null;
+            ILogger<TaskbarThumbnailToolbarService>? logger = null;
+            if (Application.Current is App app)
+            {
+                audioPlayer = app.Services.GetService<IAudioPlayerService>();
+                logger = app.Services.GetService<ILogger<TaskbarThumbnailToolbarService>>();
+            }
+
+            _taskbarToolbarService = new TaskbarThumbnailToolbarService(
+                hWnd,
+                DispatcherQueue,
+                MainShellPage.ViewModel,
+                audioPlayer,
+                logger);
+        }
+        catch
+        {
+            // Non-critical Windows shell enhancement; never block window startup
+        }
     }
 
     private void ConfigureWindowAppearance(WindowBoundsState? initialBounds)
@@ -98,6 +133,7 @@ public sealed partial class MainWindow : Window
                     titleBar.ButtonBackgroundColor = Colors.Transparent;
                     titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
                     UpdateTitleBarButtonForeground(_themeService?.CurrentTheme.IsDark ?? true);
+                    MainShellPage.AttachWindowNonClientRegions(windowId);
                 }
             }
         }
@@ -349,6 +385,8 @@ public sealed partial class MainWindow : Window
 
     private async void OnWindowRootGridLoaded(object sender, RoutedEventArgs e)
     {
+        _taskbarToolbarService?.EnsureInitialized();
+
         if (_splashStarted)
         {
             return;
@@ -418,7 +456,17 @@ public sealed partial class MainWindow : Window
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         _isClosed = true;
+        _taskbarToolbarService?.Dispose();
+        _taskbarToolbarService = null;
         FlushBoundsOnClose();
+        try
+        {
+            Task.Run(() => MainShellPage.ViewModel.PersistPlaybackSessionAsync()).Wait(TimeSpan.FromSeconds(2));
+        }
+        catch
+        {
+            // Ignore shutdown flush failures
+        }
 
         if (_appWindow is not null)
         {
