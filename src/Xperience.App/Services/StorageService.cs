@@ -310,12 +310,21 @@ public sealed class StorageService : IStorageService, IDisposable
         await JsonSerializer.SerializeAsync(stream, value, _jsonOptions, cancellationToken).ConfigureAwait(false);
     }
 
+    private const long MaxImportJsonFileBytes = 1024 * 1024;
+
     /// <inheritdoc />
     public async Task<T?> ImportJsonFileAsync<T>(string filePath, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         if (!File.Exists(filePath))
         {
+            return default;
+        }
+
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length > MaxImportJsonFileBytes)
+        {
+            _logger.LogWarning("Rejected oversized JSON import file ({Length} bytes > {Limit} bytes).", fileInfo.Length, MaxImportJsonFileBytes);
             return default;
         }
 

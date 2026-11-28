@@ -296,7 +296,8 @@ public sealed partial class ShellViewModel
 
         var launchResult = _installerLauncher.LaunchVerifiedInstallerAndShutdown(
             downloadResult.VerifiedFilePath,
-            beforeWindowClose);
+            beforeWindowClose,
+            expectedSha256: downloadResult.ExpectedSha256 ?? release.ExpectedSha256);
 
         if (!launchResult.Launched)
         {

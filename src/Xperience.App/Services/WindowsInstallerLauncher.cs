@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Windows.ApplicationModel;
@@ -43,8 +44,18 @@ public sealed class WindowsInstallerLauncher
         _logger = logger;
         _allowedUpdatesDirectory = Path.GetFullPath(
             string.IsNullOrWhiteSpace(allowedUpdatesDirectory)
-                ? Path.Combine(Path.GetTempPath(), "XperienceMusicPlayer", "Updates")
+                ? GitHubAppUpdateService.GetDefaultUpdatesDirectory()
                 : allowedUpdatesDirectory);
+
+        try
+        {
+            Directory.CreateDirectory(_allowedUpdatesDirectory);
+            WindowsAccountSessionStore.ApplyUserOnlyDirectoryAcl(_allowedUpdatesDirectory);
+        }
+        catch
+        {
+            // Best-effort directory preparation
+        }
     }
 
     /// <summary>
@@ -159,7 +170,8 @@ public sealed class WindowsInstallerLauncher
     /// </summary>
     public InstallerLaunchResult LaunchVerifiedInstallerAndShutdown(
         string verifiedInstallerPath,
-        Action? beforeWindowClose = null)
+        Action? beforeWindowClose = null,
+        string? expectedSha256 = null)
     {
         if (string.IsNullOrWhiteSpace(verifiedInstallerPath))
         {
@@ -189,6 +201,20 @@ public sealed class WindowsInstallerLauncher
             return new InstallerLaunchResult(false, ErrorMessage: "Verified installer file could not be located.");
         }
 
+        // TOCTOU mitigation: re-verify SHA-256 immediately before Process.Start when expected digest is supplied
+        if (!string.IsNullOrWhiteSpace(expectedSha256))
+        {
+            if (!Sha256ChecksumParser.TryNormalizeSha256(expectedSha256, out string normalizedExpected) ||
+                !VerifyFileSha256Sync(fullPath, normalizedExpected))
+            {
+                _logger.LogError("Pre-launch SHA-256 re-verification failed for installer: {Path}", fullPath);
+                StreamingFileVerifier.TryDeleteFile(fullPath);
+                return new InstallerLaunchResult(
+                    false,
+                    ErrorMessage: "Installer integrity verification failed immediately before launch.");
+            }
+        }
+
         try
         {
             var startInfo = new ProcessStartInfo
@@ -214,6 +240,27 @@ public sealed class WindowsInstallerLauncher
 
         PerformCleanShutdown(beforeWindowClose);
         return new InstallerLaunchResult(true);
+    }
+
+    private static bool VerifyFileSha256Sync(string filePath, string normalizedExpectedHex)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 81920,
+                useAsync: false);
+            byte[] computedBytes = SHA256.HashData(stream);
+            byte[] expectedBytes = Convert.FromHexString(normalizedExpectedHex);
+            return CryptographicOperations.FixedTimeEquals(computedBytes, expectedBytes);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void PerformCleanShutdown(Action? beforeWindowClose)

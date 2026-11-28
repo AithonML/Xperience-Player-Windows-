@@ -14,6 +14,7 @@ using Xperience.Core.Abstractions;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 
 namespace Xperience.App.Services;
 
@@ -1180,10 +1181,13 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                 {
                     using var regDoc = JsonDocument.Parse(registryJson!);
                     if (regDoc.RootElement.TryGetProperty("gdstudio", out var gdProp) &&
-                        gdProp.ValueKind == JsonValueKind.String &&
-                        !string.IsNullOrWhiteSpace(gdProp.GetString()))
+                        gdProp.ValueKind == JsonValueKind.String)
                     {
-                        gdstudioApiUrl = gdProp.GetString()!;
+                        string? candidateGdUrl = gdProp.GetString();
+                        if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(candidateGdUrl))
+                        {
+                            gdstudioApiUrl = candidateGdUrl!;
+                        }
                     }
                 }
                 catch
@@ -1223,7 +1227,7 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                                 urlsArr.GetArrayLength() > 0)
                             {
                                 string? streamUrl = urlsArr[0].GetString();
-                                if (!string.IsNullOrWhiteSpace(streamUrl) &&
+                                if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(streamUrl) &&
                                     await TryDownloadFileVerifiedAsync(streamUrl!, outputFlacPath, requireFlacHeader: true, meta.DurationSeconds, cancellationToken).ConfigureAwait(false))
                                 {
                                     return true;
@@ -1245,19 +1249,19 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                     foreach (var endpointEl in qobuzArr.EnumerateArray())
                     {
                         string? baseUrl = endpointEl.GetString();
-                        if (string.IsNullOrWhiteSpace(baseUrl))
+                        if (!YouTubeSecurityPolicy.IsSafePublicHttpsUrl(baseUrl))
                         {
                             continue;
                         }
 
-                        string reqUrl = $"{baseUrl.TrimEnd('/')}/stream?track_id={meta.QobuzTrackId}&quality=27";
+                        string reqUrl = $"{baseUrl!.TrimEnd('/')}/stream?track_id={meta.QobuzTrackId}&quality=27";
                         using var resp = await _httpClient.GetAsync(reqUrl, cancellationToken).ConfigureAwait(false);
                         if (resp.IsSuccessStatusCode)
                         {
                             string body = await resp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                             using var sDoc = JsonDocument.Parse(body);
                             string? flacUrl = sDoc.RootElement.TryGetProperty("url", out var uProp) ? uProp.GetString() : null;
-                            if (!string.IsNullOrWhiteSpace(flacUrl) &&
+                            if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(flacUrl) &&
                                 await TryDownloadFileVerifiedAsync(flacUrl!, outputFlacPath, requireFlacHeader: true, meta.DurationSeconds, cancellationToken).ConfigureAwait(false))
                             {
                                 return true;
@@ -1281,6 +1285,11 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
         string outputFlacPath,
         CancellationToken cancellationToken)
     {
+        if (!YouTubeSecurityPolicy.IsSafePublicHttpsUrl(gdstudioApiUrl))
+        {
+            return false;
+        }
+
         // If user explicitly picked a verified GDStudio candidate, try it first
         if (!string.IsNullOrWhiteSpace(meta.GdStudioSource) && !string.IsNullOrWhiteSpace(meta.GdStudioUrlId))
         {
@@ -1296,7 +1305,7 @@ public sealed class MornyeMusicDownloadService : IMusicDownloadService
                 string urlJson = await urlResp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 using var urlDoc = JsonDocument.Parse(urlJson);
                 string? streamUrl = urlDoc.RootElement.TryGetProperty("url", out var uProp) ? uProp.GetString() : null;
-                if (!string.IsNullOrWhiteSpace(streamUrl) &&
+                if (YouTubeSecurityPolicy.IsSafePublicHttpsUrl(streamUrl) &&
                     await TryDownloadFileVerifiedAsync(streamUrl!, outputFlacPath, requireFlacHeader: true, meta.DurationSeconds, cancellationToken).ConfigureAwait(false))
                 {
                     meta.ProviderSource = $"Mornye Lossless ({meta.GdStudioSource.ToUpperInvariant()} 24-bit/16-bit FLAC)";

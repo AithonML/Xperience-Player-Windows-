@@ -12,6 +12,7 @@ using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
 using Xperience.Core.Playback;
+using Xperience.Core.Services;
 using YoutubeExplode;
 using YoutubeExplode.Videos.Streams;
 
@@ -107,7 +108,8 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     private readonly string _artistAvatarCacheFilePath;
     private readonly string _artistAudienceCacheFilePath;
     private readonly string _atvCounterpartCacheFilePath;
-    private readonly string _accountSessionFilePath;
+    private readonly WindowsAccountSessionStore _sessionStore = new();
+    private readonly string _legacyWebView2LoginDirectory;
     private readonly string _streamTraceFilePath;
     private readonly object _traceLock = new();
     private string? _cachedVisitorData;
@@ -162,35 +164,37 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         _youtubeClient = new YoutubeClient();
         var apiHandler = new SocketsHttpHandler
         {
+            AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.All,
             UseCookies = false,
             PooledConnectionLifetime = TimeSpan.FromMinutes(10)
         };
-        _httpClient = new HttpClient(apiHandler)
+        _httpClient = new HttpClient(new SafeRedirectDelegatingHandler(apiHandler, YouTubeSecurityPolicy.IsAllowedYouTubeApiHost))
         {
             Timeout = TimeSpan.FromSeconds(18)
         };
 
         var downloadHandler = new SocketsHttpHandler
         {
+            AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.All,
             UseCookies = false,
             PooledConnectionLifetime = TimeSpan.FromMinutes(10)
         };
-        _downloadHttpClient = new HttpClient(downloadHandler)
+        _downloadHttpClient = new HttpClient(new SafeRedirectDelegatingHandler(downloadHandler, YouTubeSecurityPolicy.IsAllowedYouTubeApiHost))
         {
             Timeout = TimeSpan.FromSeconds(90)
         };
 
-        _cacheDirectory = Path.Combine(
+        string appDataRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "XperienceMusicPlayer",
-            "OnlineCache");
+            "XperienceMusicPlayer");
+        _cacheDirectory = Path.Combine(appDataRoot, "OnlineCache");
         _coverCacheDirectory = Path.Combine(_cacheDirectory, "CoverCache");
         _artistAvatarCacheFilePath = Path.Combine(_cacheDirectory, "artist_avatars_cache.json");
         _artistAudienceCacheFilePath = Path.Combine(_cacheDirectory, "artist_audience_cache.json");
         _atvCounterpartCacheFilePath = Path.Combine(_cacheDirectory, "atv_counterparts_cache.json");
-        _accountSessionFilePath = Path.Combine(_cacheDirectory, "ytmusic_account_session.json");
+        _legacyWebView2LoginDirectory = Path.Combine(appDataRoot, "WebView2Login");
         _streamTraceFilePath = Path.Combine(_cacheDirectory, "ytm_stream_trace.log");
         _scriptResolver = new WindowsWebView2PlayerScriptSolver(_downloadHttpClient, _logger, _cacheDirectory, TraceStream);
 
@@ -200,18 +204,21 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             Directory.CreateDirectory(_coverCacheDirectory);
 
             // Artist avatar, artist audience, and ATV counterpart disk caches are loaded lazily on first use
-            if (File.Exists(_accountSessionFilePath))
+            var savedSession = _sessionStore.Load();
+            if (savedSession is not null && !string.IsNullOrWhiteSpace(savedSession.CookieHeader))
             {
-                string sessionRaw = File.ReadAllText(_accountSessionFilePath);
-                using var sessionDoc = JsonDocument.Parse(sessionRaw);
-                string? savedCookies = sessionDoc.RootElement.TryGetProperty("CookieHeader", out var cProp) ? cProp.GetString() : null;
-                string? savedLabel = sessionDoc.RootElement.TryGetProperty("AccountLabel", out var lProp) ? lProp.GetString() : null;
-                string? savedVisitor = sessionDoc.RootElement.TryGetProperty("VisitorData", out var vProp) ? vProp.GetString() : null;
-                string? savedDataSync = sessionDoc.RootElement.TryGetProperty("DataSyncId", out var dProp) ? dProp.GetString() : null;
-                if (!string.IsNullOrWhiteSpace(savedCookies))
-                {
-                    ApplyCookieState(savedCookies, savedLabel, savedVisitor, savedDataSync);
-                }
+                ApplyCookieState(
+                    savedSession.CookieHeader,
+                    savedSession.AccountLabel,
+                    savedSession.VisitorData,
+                    savedSession.DataSyncId);
+            }
+
+            // Best-effort cleanup of any legacy persistent WebView2Login profile folder from prior versions
+            if (Directory.Exists(_legacyWebView2LoginDirectory))
+            {
+                string legacyDir = _legacyWebView2LoginDirectory;
+                _ = Task.Run(() => TryDeleteDirectorySafe(legacyDir));
             }
         }
         catch
@@ -2719,19 +2726,34 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             ];
     }
 
+    private const long MaxStreamTraceFileBytes = 256 * 1024;
+
     private void TraceStream(string message)
     {
+#if DEBUG
         try
         {
             lock (_traceLock)
             {
-                File.AppendAllText(_streamTraceFilePath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\r\n");
+                string line = $"[{DateTime.Now:HH:mm:ss.fff}] {message}\r\n";
+                if (File.Exists(_streamTraceFilePath) &&
+                    new FileInfo(_streamTraceFilePath).Length >= MaxStreamTraceFileBytes)
+                {
+                    File.WriteAllText(_streamTraceFilePath, line);
+                }
+                else
+                {
+                    File.AppendAllText(_streamTraceFilePath, line);
+                }
             }
         }
         catch
         {
             // Ignore trace IO errors
         }
+#else
+        _ = message;
+#endif
     }
 
     private static bool IsPlayabilityBlocked(string? status)
@@ -2790,7 +2812,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         if (IsAuthenticated && !_triedAccountMetaSync)
         {
             await EnsureAccountSessionMetadataAsync(cancellationToken).ConfigureAwait(false);
-            TraceStream($"Post-sync account meta: isAuth={IsAuthenticated} expired={IsSessionExpired} label='{ConnectedAccountLabel}' hasDataSync={!string.IsNullOrWhiteSpace(_dataSyncId)}");
+            TraceStream($"Post-sync account meta: isAuth={IsAuthenticated} expired={IsSessionExpired} hasDataSync={!string.IsNullOrWhiteSpace(_dataSyncId)}");
         }
 
         if (resolveCanonicalAtv)
@@ -3358,9 +3380,10 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                         cancellationToken).ConfigureAwait(false)
                     : candidate.Url;
 
-                if (string.IsNullOrWhiteSpace(resolvedUrl))
+                if (string.IsNullOrWhiteSpace(resolvedUrl) ||
+                    !YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(resolvedUrl))
                 {
-                    TraceStream($"{spec.ClientName} decipher FAILED hadSig={hadSig} sp='{candidate.Sp}' video={videoId}");
+                    TraceStream($"{spec.ClientName} decipher/validation FAILED hadSig={hadSig} sp='{candidate.Sp}' video={videoId}");
                     return (null, sawAuthBlock);
                 }
                 TraceStream($"{spec.ClientName} decipher OK hadSig={hadSig} changed={!string.Equals(resolvedUrl, candidate.Url, StringComparison.Ordinal)} video={videoId}");
@@ -3368,9 +3391,10 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 string? downloadCookie = null;
                 if (spec.SendOriginOnDownload)
                 {
-                    downloadCookie = useAuth && IsAuthenticated
+                    string? rawCookie = useAuth && IsAuthenticated
                         ? YouTubeAuthHelper.EnsureConsentCookie(_cookieHeader)
                         : (!string.IsNullOrWhiteSpace(anonCookies) ? anonCookies : null);
+                    downloadCookie = YouTubeSecurityPolicy.StripAuthCookiesForCdn(rawCookie);
                 }
 
                 return (new ResolvedAudioStream(
@@ -3407,6 +3431,11 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
 
     private static HttpRequestMessage BuildStreamDownloadRequest(string url, ResolvedAudioStream resolved)
     {
+        if (!YouTubeSecurityPolicy.IsSafeHttpsYouTubeStreamUrl(url))
+        {
+            throw new InvalidOperationException("Blocked download request to non-allowlisted stream URL.");
+        }
+
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent", resolved.UserAgent);
         req.Headers.TryAddWithoutValidation("Accept", "*/*");
@@ -3420,9 +3449,10 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             req.Headers.TryAddWithoutValidation("Referer", resolved.Referer);
         }
 
-        if (!string.IsNullOrWhiteSpace(resolved.Cookie))
+        string? sanitizedCookie = YouTubeSecurityPolicy.StripAuthCookiesForCdn(resolved.Cookie);
+        if (!string.IsNullOrWhiteSpace(sanitizedCookie))
         {
-            req.Headers.TryAddWithoutValidation("Cookie", resolved.Cookie);
+            req.Headers.TryAddWithoutValidation("Cookie", sanitizedCookie);
         }
 
         return req;
@@ -5185,6 +5215,9 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         _sapisid = string.Empty;
         _sessionVisitorData = string.Empty;
         _dataSyncId = null;
+        _cachedVisitorData = null;
+        _cachedVisitorCookies = null;
+        _visitorDataExpiry = DateTimeOffset.MinValue;
         _triedAccountMetaSync = false;
         _isSessionInvalidated = false;
         _streamCache.Clear();
@@ -5197,16 +5230,21 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         }
 
         ConnectedAccountLabel = "Not signed in";
+        _sessionStore.Delete();
+        TryDeleteDirectorySafe(_legacyWebView2LoginDirectory);
         try
         {
-            if (File.Exists(_accountSessionFilePath))
+            lock (_traceLock)
             {
-                File.Delete(_accountSessionFilePath);
+                if (File.Exists(_streamTraceFilePath))
+                {
+                    File.Delete(_streamTraceFilePath);
+                }
             }
         }
         catch
         {
-            // Ignore file delete errors
+            // Ignore trace log delete errors
         }
 
         AccountSessionChanged?.Invoke(this, EventArgs.Empty);
@@ -5217,18 +5255,30 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     {
         try
         {
-            var payload = new Dictionary<string, string?>
-            {
-                ["CookieHeader"] = _cookieHeader,
-                ["AccountLabel"] = ConnectedAccountLabel,
-                ["VisitorData"] = _sessionVisitorData,
-                ["DataSyncId"] = _dataSyncId
-            };
-            File.WriteAllText(_accountSessionFilePath, JsonSerializer.Serialize(payload));
+            _sessionStore.Save(new YouTubeAccountSessionData(
+                CookieHeader: _cookieHeader,
+                AccountLabel: ConnectedAccountLabel,
+                VisitorData: _sessionVisitorData,
+                DataSyncId: _dataSyncId));
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Could not persist YouTube Music session file.");
+            _logger.LogDebug(ex, "Could not persist encrypted YouTube Music session file.");
+        }
+    }
+
+    private static void TryDeleteDirectorySafe(string directoryPath)
+    {
+        try
+        {
+            if (Directory.Exists(directoryPath))
+            {
+                Directory.Delete(directoryPath, recursive: true);
+            }
+        }
+        catch
+        {
+            // Ignore directory delete errors
         }
     }
 

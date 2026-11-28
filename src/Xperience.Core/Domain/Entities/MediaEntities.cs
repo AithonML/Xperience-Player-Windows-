@@ -906,6 +906,11 @@ public sealed class UserPlaylist
     private IReadOnlyList<string>? _cachedCollageCovers;
 
     /// <summary>
+    /// Source identifier for playlists imported from a signed-in YouTube Music account.
+    /// </summary>
+    public const string YouTubeMusicSource = "youtube_music";
+
+    /// <summary>
     /// Gets or sets the unique playlist identifier.
     /// </summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -934,6 +939,39 @@ public sealed class UserPlaylist
     /// Gets or sets the ordered tracks inside the playlist.
     /// </summary>
     public List<TrackItem> Tracks { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the origin source of this playlist (empty for local playlists, <see cref="YouTubeMusicSource"/> for imported YouTube Music playlists).
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the normalized external playlist ID (without leading "VL") when imported from YouTube Music.
+    /// </summary>
+    public string ExternalPlaylistId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the external InnerTube browseId (e.g. "VL...") when imported from YouTube Music.
+    /// </summary>
+    public string ExternalBrowseId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the display label of the account from which this playlist was imported.
+    /// </summary>
+    public string SourceAccountLabel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the ISO-8601 UTC timestamp when this playlist was last imported or refreshed.
+    /// </summary>
+    public string ImportedAt { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets a value indicating whether this playlist was imported from YouTube Music.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsFromYouTubeMusic =>
+        string.Equals(Source, YouTubeMusicSource, StringComparison.OrdinalIgnoreCase) ||
+        !string.IsNullOrWhiteSpace(ExternalPlaylistId);
 
     /// <summary>
     /// Gets or sets a value indicating whether this playlist is an auto-generated smart suggestion

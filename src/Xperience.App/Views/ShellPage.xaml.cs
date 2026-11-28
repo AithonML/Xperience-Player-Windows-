@@ -23,6 +23,7 @@ using Xperience.App.ViewModels;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Services;
 
 namespace Xperience.App.Views;
 
@@ -3499,6 +3500,26 @@ public sealed partial class ShellPage : Page
         e.Handled = true;
     }
 
+    private void OnYouTubePlaylistImportModalBackdropTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.CloseYouTubePlaylistImportModalCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void OnDeletePlaylistConfirmationBackdropTapped(object sender, TappedRoutedEventArgs e)
+    {
+        ViewModel.CancelDeletePlaylistCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void OnYouTubeImportPlaylistItemClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: YouTubePlaylistImportItemViewModel item })
+        {
+            ViewModel.ToggleYouTubeImportItemSelection(item);
+        }
+    }
+
     private void OnDownloadCandidatesModalBackdropTapped(object sender, TappedRoutedEventArgs e)
     {
         ViewModel.CloseDownloadOptionsModalCommand.Execute(null);
@@ -3623,6 +3644,64 @@ public sealed partial class ShellPage : Page
         {
             await ViewModel.PlayPlaylistDirectlyAsync(playlist);
         }
+    }
+
+    private void OnPlaylistCardRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element)
+        {
+            return;
+        }
+
+        PlaylistCardViewModel? card = element.Tag as PlaylistCardViewModel;
+        UserPlaylist? playlist = card?.Playlist ?? element.Tag as UserPlaylist;
+        if (playlist is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var flyout = new MenuFlyout();
+
+        var openItem = new MenuFlyoutItem
+        {
+            Text = "Open Playlist",
+            Icon = new FontIcon { Glyph = "\uE8A7" }
+        };
+        openItem.Click += async (_, _) =>
+        {
+            _ = CatalogScrollViewer.ChangeView(null, 0, null, disableAnimation: false);
+            await ViewModel.OpenPlaylistDetailAsync(playlist);
+        };
+        flyout.Items.Add(openItem);
+
+        if (playlist.Tracks.Count > 0)
+        {
+            var playItem = new MenuFlyoutItem
+            {
+                Text = "Play Playlist",
+                Icon = new FontIcon { Glyph = "\uE768" }
+            };
+            playItem.Click += async (_, _) => await ViewModel.PlayPlaylistDirectlyAsync(playlist);
+            flyout.Items.Add(playItem);
+        }
+
+        if (!playlist.IsSmartSuggestion)
+        {
+            flyout.Items.Add(new MenuFlyoutSeparator());
+
+            string removeLabel = card?.RemoveActionLabel ??
+                                 (playlist.IsFromYouTubeMusic ? "Remove from App" : "Delete Playlist");
+            var removeItem = new MenuFlyoutItem
+            {
+                Text = removeLabel,
+                Icon = new FontIcon { Glyph = "\uE74D" }
+            };
+            removeItem.Click += (_, _) => ViewModel.RequestDeletePlaylistCard(playlist);
+            flyout.Items.Add(removeItem);
+        }
+
+        flyout.ShowAt(element, e.GetPosition(element));
     }
 
     private async void OnPlaylistDetailTrackTapped(object sender, TappedRoutedEventArgs e)
@@ -4187,13 +4266,23 @@ public sealed partial class ShellPage : Page
     private async void OnInteractiveYouTubeLoginRequested(object? sender, EventArgs e)
     {
         WebView2? webView = null;
+        string? loginUserDataDir = null;
         try
         {
-            string loginUserDataDir = Path.Combine(
+            string tempRoot = Path.Combine(Path.GetTempPath(), "XperienceMusicPlayer");
+            Directory.CreateDirectory(tempRoot);
+            loginUserDataDir = Path.Combine(tempRoot, $"wv2_login_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(loginUserDataDir);
+
+            // Also remove any legacy persistent WebView2Login directory if still present
+            string legacyLoginDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "XperienceMusicPlayer",
                 "WebView2Login");
-            Directory.CreateDirectory(loginUserDataDir);
+            if (Directory.Exists(legacyLoginDir))
+            {
+                _ = Task.Run(() => DeleteDirectoryWithRetryAsync(legacyLoginDir));
+            }
 
             webView = new WebView2
             {
@@ -4291,7 +4380,35 @@ public sealed partial class ShellPage : Page
                 browserExecutableFolder: null,
                 userDataFolder: loginUserDataDir,
                 options: null);
-            await webView.EnsureCoreWebView2Async(env);
+            var controllerOptions = env.CreateCoreWebView2ControllerOptions();
+            controllerOptions.IsInPrivateModeEnabled = true;
+            await webView.EnsureCoreWebView2Async(env, controllerOptions);
+
+            var settings = webView.CoreWebView2.Settings;
+            settings.AreDevToolsEnabled = false;
+            settings.AreDefaultContextMenusEnabled = false;
+            settings.IsStatusBarEnabled = false;
+            settings.AreBrowserAcceleratorKeysEnabled = false;
+            settings.IsPasswordAutosaveEnabled = false;
+            settings.IsGeneralAutofillEnabled = false;
+            settings.IsWebMessageEnabled = false;
+
+            webView.CoreWebView2.NavigationStarting += (_, navStartArgs) =>
+            {
+                if (!YouTubeSecurityPolicy.IsAllowedGoogleAuthUrl(navStartArgs.Uri))
+                {
+                    navStartArgs.Cancel = true;
+                }
+            };
+
+            webView.CoreWebView2.NewWindowRequested += (wv, newWinArgs) =>
+            {
+                newWinArgs.Handled = true;
+                if (YouTubeSecurityPolicy.IsAllowedGoogleAuthUrl(newWinArgs.Uri))
+                {
+                    wv.Navigate(newWinArgs.Uri);
+                }
+            };
 
             webView.CoreWebView2.NavigationCompleted += async (wv, navArgs) =>
             {
@@ -4354,7 +4471,45 @@ public sealed partial class ShellPage : Page
         }
         finally
         {
+            if (webView?.CoreWebView2 is { } coreWebView)
+            {
+                try { coreWebView.CookieManager.DeleteAllCookies(); } catch { }
+                try
+                {
+                    await coreWebView.Profile.ClearBrowsingDataAsync(
+                        Microsoft.Web.WebView2.Core.CoreWebView2BrowsingDataKinds.AllProfile);
+                }
+                catch { }
+            }
+
             try { webView?.Close(); } catch { }
+
+            if (!string.IsNullOrWhiteSpace(loginUserDataDir))
+            {
+                string dirToDelete = loginUserDataDir;
+                _ = Task.Run(() => DeleteDirectoryWithRetryAsync(dirToDelete));
+            }
+        }
+    }
+
+    private static async Task DeleteDirectoryWithRetryAsync(string directoryPath)
+    {
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(directoryPath))
+                {
+                    return;
+                }
+
+                Directory.Delete(directoryPath, recursive: true);
+                return;
+            }
+            catch
+            {
+                await Task.Delay(500).ConfigureAwait(false);
+            }
         }
     }
 

@@ -5989,32 +5989,63 @@
                                 </StackPanel>
                             </controls:LiquidGlassPanel>
 
-                            <!-- Right New Playlist CTA Pill -->
-                            <controls:LiquidGlassPanel Grid.Column="2"
-                                                       Height="38"
-                                                       VerticalAlignment="Center"
-                                                       GlassCornerRadius="19"
-                                                       SampleLiveBackdrop="True"
-                                                       GlassPadding="0"
-                                                       EnableHoverScale="True">
-                                <Button Command="{x:Bind ViewModel.OpenCreatePlaylistModalCommand, Mode=OneWay}"
-                                        Style="{StaticResource TransparentEmbeddedButtonStyle}"
-                                        Height="38"
-                                        CornerRadius="19"
-                                        Padding="10,0,16,0"
-                                        FontSize="12.5">
-                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                        <Border Width="20" Height="20" CornerRadius="10"
-                                                Background="{ThemeResource TokenPrimaryAccentBrush}">
-                                            <FontIcon Glyph="&#xE710;" FontSize="10" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                        </Border>
-                                        <TextBlock Text="New Playlist"
-                                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
-                                                   FontWeight="Bold"
-                                                   Foreground="{ThemeResource TokenPrimaryTextBrush}" />
-                                    </StackPanel>
-                                </Button>
-                            </controls:LiquidGlassPanel>
+                            <!-- Right CTA Pills: Import YT Music (when signed in) + New Playlist -->
+                            <StackPanel Grid.Column="2"
+                                        Orientation="Horizontal"
+                                        Spacing="10"
+                                        VerticalAlignment="Center">
+                                <controls:LiquidGlassPanel Height="38"
+                                                           VerticalAlignment="Center"
+                                                           GlassCornerRadius="19"
+                                                           SampleLiveBackdrop="True"
+                                                           GlassPadding="0"
+                                                           EnableHoverScale="True"
+                                                           Visibility="{x:Bind ViewModel.YouTubeMusicSignedInVisibility, Mode=OneWay}">
+                                    <Button Command="{x:Bind ViewModel.OpenYouTubePlaylistImportModalCommand, Mode=OneWay}"
+                                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                                            Height="38"
+                                            CornerRadius="19"
+                                            Padding="10,0,16,0"
+                                            FontSize="12.5"
+                                            ToolTipService.ToolTip="Import playlists from your YouTube Music account">
+                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <Border Width="20" Height="20" CornerRadius="10"
+                                                    Background="#FFFF2E54">
+                                                <FontIcon Glyph="&#xE896;" FontSize="10" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <TextBlock Text="Import YT Music"
+                                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                                       FontWeight="Bold"
+                                                       Foreground="{ThemeResource TokenPrimaryTextBrush}" />
+                                        </StackPanel>
+                                    </Button>
+                                </controls:LiquidGlassPanel>
+
+                                <controls:LiquidGlassPanel Height="38"
+                                                           VerticalAlignment="Center"
+                                                           GlassCornerRadius="19"
+                                                           SampleLiveBackdrop="True"
+                                                           GlassPadding="0"
+                                                           EnableHoverScale="True">
+                                    <Button Command="{x:Bind ViewModel.OpenCreatePlaylistModalCommand, Mode=OneWay}"
+                                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                                            Height="38"
+                                            CornerRadius="19"
+                                            Padding="10,0,16,0"
+                                            FontSize="12.5">
+                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <Border Width="20" Height="20" CornerRadius="10"
+                                                    Background="{ThemeResource TokenPrimaryAccentBrush}">
+                                                <FontIcon Glyph="&#xE710;" FontSize="10" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <TextBlock Text="New Playlist"
+                                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                                       FontWeight="Bold"
+                                                       Foreground="{ThemeResource TokenPrimaryTextBrush}" />
+                                        </StackPanel>
+                                    </Button>
+                                </controls:LiquidGlassPanel>
+                            </StackPanel>
                         </Grid>
 
                         <!-- Auto-Generated Smart Suggested Playlists ("Sugerencias para ti" — Never Auto-Saved Until User Clicks Save) -->
@@ -6254,19 +6285,40 @@
                                            Foreground="{ThemeResource TokenSecondaryTextBrush}"
                                            TextWrapping="Wrap"
                                            TextAlignment="Center" />
-                                <Button Command="{x:Bind ViewModel.OpenCreatePlaylistModalCommand, Mode=OneWay}"
-                                        Style="{StaticResource LiquidPillActiveSegmentButtonStyle}"
-                                        HorizontalAlignment="Center"
-                                        Margin="0,6,0,0"
-                                        Height="40"
-                                        CornerRadius="20"
-                                        Padding="20,0"
-                                        FontSize="13"
-                                        FontWeight="Bold"
-                                        helpers:MicroInteractions.HoverScale="1.05"
-                                        helpers:MicroInteractions.PressScale="0.94">
-                                    <TextBlock Text="+ Create First Playlist" FontWeight="Bold" />
-                                </Button>
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="10"
+                                            HorizontalAlignment="Center"
+                                            Margin="0,6,0,0">
+                                    <Button Command="{x:Bind ViewModel.OpenCreatePlaylistModalCommand, Mode=OneWay}"
+                                            Style="{StaticResource LiquidPillActiveSegmentButtonStyle}"
+                                            Height="40"
+                                            CornerRadius="20"
+                                            Padding="20,0"
+                                            FontSize="13"
+                                            FontWeight="Bold"
+                                            helpers:MicroInteractions.HoverScale="1.05"
+                                            helpers:MicroInteractions.PressScale="0.94">
+                                        <TextBlock Text="+ Create First Playlist" FontWeight="Bold" />
+                                    </Button>
+
+                                    <Button Command="{x:Bind ViewModel.OpenYouTubePlaylistImportModalCommand, Mode=OneWay}"
+                                            Visibility="{x:Bind ViewModel.YouTubeMusicSignedInVisibility, Mode=OneWay}"
+                                            Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                            BorderBrush="#88FF2E54"
+                                            BorderThickness="1"
+                                            Height="40"
+                                            CornerRadius="20"
+                                            Padding="18,0"
+                                            FontSize="13"
+                                            FontWeight="Bold"
+                                            helpers:MicroInteractions.HoverScale="1.05"
+                                            helpers:MicroInteractions.PressScale="0.94">
+                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <Border Width="8" Height="8" CornerRadius="4" Background="#FFFF2E54" />
+                                            <TextBlock Text="Import from YouTube Music" FontWeight="Bold" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
                             </StackPanel>
                         </controls:LiquidGlassPanel>
 
@@ -6287,6 +6339,7 @@
                                             HorizontalAlignment="Stretch"
                                             HorizontalContentAlignment="Stretch"
                                             Click="OnPlaylistCardClicked"
+                                            RightTapped="OnPlaylistCardRightTapped"
                                             Tag="{x:Bind}"
                                             helpers:MicroInteractions.HoverScale="1.035"
                                             helpers:MicroInteractions.PressScale="0.95"
@@ -6382,6 +6435,27 @@
                                                             <TextBlock Text="{x:Bind TrackBadgeText, Mode=OneWay}"
                                                                        FontFamily="{StaticResource TokenHeadingFontFamily}"
                                                                        FontSize="10.5"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="White" />
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <!-- Top-Right YouTube Music Source Indicator Pill -->
+                                                    <Border HorizontalAlignment="Right"
+                                                            VerticalAlignment="Top"
+                                                            Margin="0,10,10,0"
+                                                            CornerRadius="10"
+                                                            Padding="8,3"
+                                                            Background="#C8181820"
+                                                            BorderBrush="#88FF2E54"
+                                                            BorderThickness="0.9"
+                                                            Visibility="{x:Bind YouTubeMusicBadgeVisibility, Mode=OneWay}"
+                                                            IsHitTestVisible="False">
+                                                        <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                                                            <Border Width="6" Height="6" CornerRadius="3" Background="#FFFF2E54" />
+                                                            <TextBlock Text="YT Music"
+                                                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                                                       FontSize="10"
                                                                        FontWeight="Bold"
                                                                        Foreground="White" />
                                                         </StackPanel>
@@ -6516,14 +6590,35 @@
                                                            GlassPadding="0"
                                                            SampleLiveBackdrop="True"
                                                            EnableHoverScale="True"
-                                                           Visibility="{x:Bind ViewModel.CurrentPlaylistDeleteButtonVisibility, Mode=OneWay}">
-                                    <Button Command="{x:Bind ViewModel.DeleteCurrentPlaylistCommand, Mode=OneWay}"
+                                                           Visibility="{x:Bind ViewModel.CurrentPlaylistRefreshButtonVisibility, Mode=OneWay}">
+                                    <Button Command="{x:Bind ViewModel.RefreshCurrentYouTubePlaylistCommand, Mode=OneWay}"
+                                            IsEnabled="{x:Bind ViewModel.CanRefreshCurrentYouTubePlaylist, Mode=OneWay}"
                                             Style="{StaticResource TransparentEmbeddedButtonStyle}"
                                             Width="44"
                                             Height="44"
                                             CornerRadius="22"
                                             Padding="0"
-                                            ToolTipService.ToolTip="Delete Playlist">
+                                            ToolTipService.ToolTip="Refresh from YouTube Music">
+                                        <FontIcon Glyph="&#xE72C;"
+                                                  FontSize="14"
+                                                  Foreground="{StaticResource PlaylistPrimaryInkBrush}" />
+                                    </Button>
+                                </controls:LiquidGlassPanel>
+
+                                <controls:LiquidGlassPanel Width="44"
+                                                           Height="44"
+                                                           GlassCornerRadius="22"
+                                                           GlassPadding="0"
+                                                           SampleLiveBackdrop="True"
+                                                           EnableHoverScale="True"
+                                                           Visibility="{x:Bind ViewModel.CurrentPlaylistDeleteButtonVisibility, Mode=OneWay}">
+                                    <Button Command="{x:Bind ViewModel.RequestDeleteCurrentPlaylistCommand, Mode=OneWay}"
+                                            Style="{StaticResource TransparentEmbeddedButtonStyle}"
+                                            Width="44"
+                                            Height="44"
+                                            CornerRadius="22"
+                                            Padding="0"
+                                            ToolTipService.ToolTip="{x:Bind ViewModel.CurrentPlaylistDeleteButtonTooltip, Mode=OneWay}">
                                         <FontIcon Glyph="&#xE74D;"
                                                   FontSize="14.5"
                                                   Foreground="#FFFF6B7A" />
@@ -6630,6 +6725,24 @@
                                            TextWrapping="Wrap"
                                            MaxLines="2"
                                            TextTrimming="CharacterEllipsis" />
+
+                                <!-- YouTube Music Origin Indicator Pill -->
+                                <Border Visibility="{x:Bind ViewModel.CurrentPlaylistYouTubeBadgeVisibility, Mode=OneWay}"
+                                        HorizontalAlignment="Center"
+                                        CornerRadius="12"
+                                        Padding="10,4"
+                                        Background="#B8181820"
+                                        BorderBrush="#88FF2E54"
+                                        BorderThickness="1">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <Border Width="7" Height="7" CornerRadius="3.5" Background="#FFFF2E54" />
+                                        <TextBlock Text="YouTube Music"
+                                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"
+                                                   Foreground="White" />
+                                    </StackPanel>
+                                </Border>
 
                                 <!-- Subtle Accent Subtitle ("Playlist" or "Sugerencia para ti", Mirrors Album's Artist Accent Line) -->
                                 <TextBlock Text="{x:Bind ViewModel.CurrentPlaylistTypeAccentLabel, Mode=OneWay}"
@@ -10507,6 +10620,50 @@
                                         </Grid>
                                     </Border>
 
+                                    <!-- YouTube Music Playlists Import Card -->
+                                    <Border Visibility="{x:Bind ViewModel.YouTubeMusicSignedInVisibility, Mode=OneWay}"
+                                            Background="{ThemeResource Win11CardBackgroundBrush}"
+                                            BorderBrush="{ThemeResource Win11CardBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="20,16">
+                                        <Grid ColumnSpacing="16">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0"
+                                                    Width="40" Height="40"
+                                                    CornerRadius="20"
+                                                    Background="#24FF2E54"
+                                                    BorderBrush="#66FF2E54"
+                                                    BorderThickness="1">
+                                                <FontIcon Glyph="&#xE8FD;" FontSize="17" Foreground="#FFFF4D6D" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                <TextBlock Text="YouTube Music Playlists"
+                                                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                                                           FontSize="14"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{ThemeResource TokenPrimaryTextBrush}" />
+                                                <TextBlock Text="Import playlists from your YouTube Music library into Playlists. Removing an imported playlist from this app only deletes it locally and won't affect your YouTube Music account."
+                                                           FontFamily="Segoe UI Variable Text, Segoe UI"
+                                                           FontSize="12"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{ThemeResource TokenSecondaryTextBrush}" />
+                                            </StackPanel>
+                                            <Button Grid.Column="2"
+                                                    Content="Import Playlists..."
+                                                    Command="{x:Bind ViewModel.OpenYouTubePlaylistImportModalCommand, Mode=OneWay}"
+                                                    Style="{StaticResource AccentButtonStyle}"
+                                                    VerticalAlignment="Center"
+                                                    CornerRadius="4"
+                                                    Padding="14,7"
+                                                    FontSize="12.5" />
+                                        </Grid>
+                                    </Border>
+
                                     <!-- Direct Cookie / Session Paste Card -->
                                     <Border Background="{ThemeResource Win11CardBackgroundBrush}"
                                             BorderBrush="{ThemeResource Win11CardBorderBrush}"
@@ -10536,11 +10693,13 @@
                                                          Text="{x:Bind ViewModel.YouTubeAccountLabelInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                          CornerRadius="4"
                                                          FontSize="12.5" />
-                                                <TextBox Grid.Column="1"
-                                                         PlaceholderText="Paste Cookie header containing SAPISID=..."
-                                                         Text="{x:Bind ViewModel.YouTubeCookieInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                         CornerRadius="4"
-                                                         FontSize="12.5" />
+                                                <PasswordBox x:Name="YouTubeCookiePasswordBox"
+                                                             Grid.Column="1"
+                                                             PasswordRevealMode="Hidden"
+                                                             PlaceholderText="Paste Cookie header from music.youtube.com..."
+                                                             Password="{x:Bind ViewModel.YouTubeMusicCookieHeaderInput, Mode=TwoWay}"
+                                                             CornerRadius="4"
+                                                             FontSize="12.5" />
                                                 <Button Grid.Column="2"
                                                         Content="Connect Cookie"
                                                         Command="{x:Bind ViewModel.ConnectYouTubeAccountCookieCommand, Mode=OneWay}"
@@ -15308,6 +15467,367 @@
                                     FontWeight="Bold" />
                         </StackPanel>
                     </Border>
+                </StackPanel>
+            </controls:LiquidGlassPanel>
+        </Grid>
+
+        <!-- ================================================================================= -->
+        <!-- OVERLAY 2E: IMPORT YOUTUBE MUSIC PLAYLISTS MODAL (LiquidGlass)                    -->
+        <!-- Lets signed-in users pick YouTube Music library playlists to import locally.      -->
+        <!-- ================================================================================= -->
+        <Grid x:Name="YouTubePlaylistImportModalOverlay"
+              x:Load="{x:Bind ViewModel.IsYouTubePlaylistImportModalOpen, Mode=OneWay}"
+              Visibility="{x:Bind ViewModel.YouTubePlaylistImportModalVisibility, Mode=OneWay}"
+              Background="#66000000"
+              Tapped="OnYouTubePlaylistImportModalBackdropTapped"
+              Canvas.ZIndex="58">
+            <controls:LiquidGlassPanel Width="520"
+                                       MaxHeight="660"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       GlassCornerRadius="28"
+                                       GlassPadding="22,20"
+                                       SampleLiveBackdrop="True">
+                <Grid RowSpacing="14" Tapped="OnModalCardTapped">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Grid Grid.Row="0" ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0"
+                                Width="30" Height="30"
+                                CornerRadius="15"
+                                Background="#28FF2E54"
+                                BorderBrush="#88FF2E54"
+                                BorderThickness="1">
+                            <FontIcon Glyph="&#xE8FD;" FontSize="13" Foreground="#FFFF4D6D" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                            <TextBlock Text="Import YouTube Music Playlists"
+                                       FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                       FontSize="17.5"
+                                       FontWeight="Bold"
+                                       Foreground="{ThemeResource TokenPrimaryTextBrush}" />
+                            <TextBlock Text="YouTube Music Library"
+                                       FontFamily="{StaticResource TokenBodyFontFamily}"
+                                       FontSize="11.5"
+                                       Foreground="#FFFF6B86" />
+                        </StackPanel>
+                        <Button Grid.Column="2"
+                                Command="{x:Bind ViewModel.CloseYouTubePlaylistImportModalCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind ViewModel.CanDismissYouTubePlaylistImportModal, Mode=OneWay}"
+                                Style="{StaticResource GlassCircleIconButtonStyle}"
+                                Width="30" Height="30" CornerRadius="15"
+                                VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE711;" FontSize="11" Foreground="{ThemeResource TokenPrimaryTextBrush}" />
+                        </Button>
+                    </Grid>
+
+                    <!-- Info Note + Selection Controls -->
+                    <StackPanel Grid.Row="1" Spacing="10">
+                        <Border Background="#18FFFFFF"
+                                BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="12"
+                                Padding="12,8">
+                            <TextBlock Text="Select playlists to copy into your Playlists library. Removing an imported playlist from this app only removes it locally and won't affect your YouTube Music account."
+                                       FontFamily="{StaticResource TokenBodyFontFamily}"
+                                       FontSize="11.5"
+                                       TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TokenSecondaryTextBrush}" />
+                        </Border>
+
+                        <Grid Visibility="{x:Bind ViewModel.ImportYouTubeSelectionToolbarVisibility, Mode=OneWay}" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="{x:Bind ViewModel.YouTubePlaylistImportStatusText, Mode=OneWay}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold"
+                                       Foreground="{ThemeResource TokenSecondaryTextBrush}"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                            <Button Grid.Column="1"
+                                    Content="Select All"
+                                    Command="{x:Bind ViewModel.SelectAllYouTubeImportPlaylistsCommand, Mode=OneWay}"
+                                    Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                    BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                    CornerRadius="10"
+                                    Padding="10,4"
+                                    FontSize="11.5" />
+                            <Button Grid.Column="2"
+                                    Content="Clear"
+                                    Command="{x:Bind ViewModel.ClearYouTubeImportSelectionCommand, Mode=OneWay}"
+                                    Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                    BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                    CornerRadius="10"
+                                    Padding="10,4"
+                                    FontSize="11.5" />
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Body: Loading / Error / Empty / Scrollable Playlist List -->
+                    <Grid Grid.Row="2" MinHeight="140">
+                        <!-- Loading -->
+                        <StackPanel Visibility="{x:Bind ViewModel.ImportYouTubeLoadingVisibility, Mode=OneWay}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="10"
+                                    Padding="0,24">
+                            <ProgressRing Width="32"
+                                          Height="32"
+                                          IsActive="{x:Bind ViewModel.IsLoadingYouTubeLibraryPlaylists, Mode=OneWay}" />
+                            <TextBlock Text="Loading your YouTube Music playlists..."
+                                       FontSize="12.5"
+                                       Foreground="{ThemeResource TokenSecondaryTextBrush}"
+                                       HorizontalAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- Error -->
+                        <StackPanel Visibility="{x:Bind ViewModel.ImportYouTubeErrorVisibility, Mode=OneWay}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="10"
+                                    Padding="16,20">
+                            <TextBlock Text="{x:Bind ViewModel.YouTubePlaylistImportErrorText, Mode=OneWay}"
+                                       FontSize="12.5"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center"
+                                       Foreground="#FFFF8A9B" />
+                            <Button Content="Try Again"
+                                    Command="{x:Bind ViewModel.OpenYouTubePlaylistImportModalCommand, Mode=OneWay}"
+                                    Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                    BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                    CornerRadius="12"
+                                    Padding="14,6"
+                                    HorizontalAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- Empty -->
+                        <StackPanel Visibility="{x:Bind ViewModel.EmptyYouTubeLibraryImportVisibility, Mode=OneWay}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="8"
+                                    Padding="16,24">
+                            <FontIcon Glyph="&#xE90B;" FontSize="28" Foreground="{ThemeResource TokenSecondaryTextBrush}" HorizontalAlignment="Center" />
+                            <TextBlock Text="No playlists found in your YouTube Music library."
+                                       FontSize="12.5"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TokenSecondaryTextBrush}" />
+                        </StackPanel>
+
+                        <!-- Selectable Playlist List -->
+                        <ScrollViewer Visibility="{x:Bind ViewModel.HasYouTubeLibraryImportItemsVisibility, Mode=OneWay}"
+                                      MaxHeight="340"
+                                      VerticalScrollBarVisibility="Auto">
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.YouTubeLibraryImportItems, Mode=OneWay}">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Spacing="8" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:YouTubePlaylistImportItemViewModel">
+                                        <Button Click="OnYouTubeImportPlaylistItemClicked"
+                                                Tag="{x:Bind}"
+                                                Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                                BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="14"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Stretch"
+                                                Padding="10,8">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox Grid.Column="0"
+                                                          IsChecked="{x:Bind IsSelected, Mode=OneWay}"
+                                                          MinWidth="0"
+                                                          Padding="0"
+                                                          IsHitTestVisible="False"
+                                                          IsTabStop="False"
+                                                          VerticalAlignment="Center" />
+
+                                                <Border Grid.Column="1"
+                                                        Width="44" Height="44"
+                                                        CornerRadius="10"
+                                                        Background="{ThemeResource TokenAccentBadgeBackgroundBrush}"
+                                                        BorderBrush="#33FFFFFF"
+                                                        BorderThickness="0.8">
+                                                    <Grid>
+                                                        <FontIcon Glyph="&#xE90B;"
+                                                                  FontSize="18"
+                                                                  Opacity="{x:Bind FallbackIconOpacity, Mode=OneWay}"
+                                                                  Foreground="{ThemeResource TokenPrimaryAccentBrush}"
+                                                                  HorizontalAlignment="Center"
+                                                                  VerticalAlignment="Center" />
+                                                        <Border CornerRadius="9" Opacity="{x:Bind ArtworkOpacity, Mode=OneWay}">
+                                                            <Image helpers:BitmapDecodeHelper.DecodeWidth="96"
+                                                                   helpers:BitmapDecodeHelper.SourceUri="{x:Bind SafeArtworkUri, Mode=OneWay}"
+                                                                   Stretch="UniformToFill" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock Text="{x:Bind Title, Mode=OneWay}"
+                                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                                               FontSize="13"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{ThemeResource TokenPrimaryTextBrush}"
+                                                               MaxLines="1"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{x:Bind Subtitle, Mode=OneWay}"
+                                                               FontFamily="{StaticResource TokenBodyFontFamily}"
+                                                               FontSize="11.5"
+                                                               Foreground="{ThemeResource TokenSecondaryTextBrush}"
+                                                               MaxLines="1"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+
+                                                <Border Grid.Column="3"
+                                                        Visibility="{x:Bind AlreadyImportedBadgeVisibility, Mode=OneWay}"
+                                                        VerticalAlignment="Center"
+                                                        CornerRadius="8"
+                                                        Padding="8,3"
+                                                        Background="#2634D399"
+                                                        BorderBrush="#6634D399"
+                                                        BorderThickness="0.8">
+                                                    <TextBlock Text="Imported"
+                                                               FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                                               FontSize="10.5"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FF6EE7B7" />
+                                                </Border>
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- Import Progress Strip -->
+                    <StackPanel Grid.Row="3"
+                                Visibility="{x:Bind ViewModel.ImportYouTubeProgressVisibility, Mode=OneWay}"
+                                Orientation="Horizontal"
+                                Spacing="10"
+                                VerticalAlignment="Center">
+                        <ProgressRing Width="18"
+                                      Height="18"
+                                      IsActive="{x:Bind ViewModel.IsImportingYouTubePlaylists, Mode=OneWay}" />
+                        <TextBlock Text="{x:Bind ViewModel.YouTubePlaylistImportProgressText, Mode=OneWay}"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TokenPrimaryTextBrush}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <!-- Footer Actions -->
+                    <StackPanel Grid.Row="4"
+                                Orientation="Horizontal"
+                                Spacing="10"
+                                HorizontalAlignment="Right">
+                        <Button Content="Not Now"
+                                Command="{x:Bind ViewModel.CloseYouTubePlaylistImportModalCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind ViewModel.CanDismissYouTubePlaylistImportModal, Mode=OneWay}"
+                                Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                CornerRadius="14"
+                                Padding="16,8"
+                                FontSize="12.5" />
+                        <Button Content="{x:Bind ViewModel.ImportYouTubePlaylistsButtonLabel, Mode=OneWay}"
+                                Command="{x:Bind ViewModel.ImportSelectedYouTubePlaylistsCommand, Mode=OneWay}"
+                                IsEnabled="{x:Bind ViewModel.CanImportSelectedYouTubePlaylists, Mode=OneWay}"
+                                Style="{StaticResource LiquidPillActiveSegmentButtonStyle}"
+                                CornerRadius="14"
+                                Padding="18,8"
+                                FontSize="12.5"
+                                FontWeight="Bold" />
+                    </StackPanel>
+                </Grid>
+            </controls:LiquidGlassPanel>
+        </Grid>
+
+        <!-- ================================================================================= -->
+        <!-- OVERLAY 2F: DELETE / REMOVE PLAYLIST CONFIRMATION MODAL (LiquidGlass)             -->
+        <!-- Clarifies local-only removal for YouTube Music imported playlists.                -->
+        <!-- ================================================================================= -->
+        <Grid x:Name="DeletePlaylistConfirmationOverlay"
+              x:Load="{x:Bind ViewModel.IsDeletePlaylistConfirmationOpen, Mode=OneWay}"
+              Visibility="{x:Bind ViewModel.DeletePlaylistConfirmationVisibility, Mode=OneWay}"
+              Background="#66000000"
+              Tapped="OnDeletePlaylistConfirmationBackdropTapped"
+              Canvas.ZIndex="60">
+            <controls:LiquidGlassPanel Width="430"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       GlassCornerRadius="26"
+                                       GlassPadding="24,20"
+                                       SampleLiveBackdrop="True">
+                <StackPanel Spacing="14" Tapped="OnModalCardTapped">
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Border Width="32" Height="32"
+                                CornerRadius="16"
+                                Background="#28FF4D6D"
+                                BorderBrush="#88FF4D6D"
+                                BorderThickness="1">
+                            <FontIcon Glyph="&#xE74D;" FontSize="14" Foreground="#FFFF6B7A" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{x:Bind ViewModel.PendingDeletePlaylistTitle, Mode=OneWay}"
+                                   FontFamily="{StaticResource TokenHeadingFontFamily}"
+                                   FontSize="17"
+                                   FontWeight="Bold"
+                                   Foreground="{ThemeResource TokenPrimaryTextBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <TextBlock Text="{x:Bind ViewModel.PendingDeletePlaylistMessage, Mode=OneWay}"
+                               FontFamily="{StaticResource TokenBodyFontFamily}"
+                               FontSize="13"
+                               LineHeight="19"
+                               TextWrapping="Wrap"
+                               Foreground="{ThemeResource TokenSecondaryTextBrush}" />
+
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="10"
+                                HorizontalAlignment="Right"
+                                Margin="0,4,0,0">
+                        <Button Content="Cancel"
+                                Command="{x:Bind ViewModel.CancelDeletePlaylistCommand, Mode=OneWay}"
+                                Style="{StaticResource LiquidPillSegmentButtonStyle}"
+                                BorderBrush="{ThemeResource TokenSurfaceBorderBrush}"
+                                CornerRadius="14"
+                                Padding="16,8"
+                                FontSize="12.5" />
+                        <Button Content="{x:Bind ViewModel.PendingDeletePlaylistConfirmLabel, Mode=OneWay}"
+                                Command="{x:Bind ViewModel.ConfirmDeletePlaylistCommand, Mode=OneWay}"
+                                Background="#FFD9364E"
+                                Foreground="White"
+                                BorderBrush="#44FFFFFF"
+                                BorderThickness="1"
+                                CornerRadius="14"
+                                Padding="16,8"
+                                FontSize="12.5"
+                                FontWeight="Bold" />
+                    </StackPanel>
                 </StackPanel>
             </controls:LiquidGlassPanel>
         </Grid>

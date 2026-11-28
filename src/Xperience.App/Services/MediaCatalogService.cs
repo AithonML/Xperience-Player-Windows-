@@ -4252,12 +4252,58 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
     }
 
     /// <inheritdoc />
+    public async Task<UserPlaylist> ImportYouTubeMusicPlaylistAsync(
+        YouTubeMusicLibraryPlaylist playlist,
+        IReadOnlyList<TrackItem> tracks,
+        string? accountLabel = null,
+        string? description = null,
+        string? coverUri = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(playlist);
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        var decoratedTracks = new List<TrackItem>(tracks?.Count ?? 0);
+        if (tracks is not null)
+        {
+            foreach (var tr in tracks)
+            {
+                if (tr is null)
+                {
+                    continue;
+                }
+
+                DecorateTrackWithLocalOfflineMatch(tr);
+                decoratedTracks.Add(tr);
+            }
+        }
+
+        UserPlaylist upserted;
+        List<UserPlaylist> snapshot;
+        lock (_playlists)
+        {
+            upserted = Xperience.Core.Services.PlaylistImportHelper.UpsertYouTubeMusicPlaylist(
+                _playlists,
+                playlist,
+                decoratedTracks,
+                accountLabel: accountLabel,
+                description: description,
+                fallbackCoverUri: coverUri);
+            snapshot = [.. _playlists];
+        }
+
+        await _storageService.SaveAsync(PersistedPlaylistsKey, snapshot, cancellationToken).ConfigureAwait(false);
+        return upserted;
+    }
+
+    /// <inheritdoc />
     public async Task DeletePlaylistAsync(
         string playlistId,
         CancellationToken cancellationToken = default)
     {
         await InitializeAsync(cancellationToken).ConfigureAwait(false);
 
+        // Strictly local-only removal: never calls any YouTube Music API or modifies the remote account.
         List<UserPlaylist> snapshot;
         lock (_playlists)
         {
