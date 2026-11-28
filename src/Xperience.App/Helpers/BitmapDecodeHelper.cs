@@ -3,17 +3,21 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Xperience.App.Services;
+using Xperience.Core.Collections;
 
 namespace Xperience.App.Helpers;
 
 /// <summary>
 /// Attached properties for bounded-resolution <see cref="BitmapImage"/> decoding on
-/// <see cref="Image"/> and <see cref="ImageBrush"/> targets to prevent full-resolution
-/// software/GPU texture bloat while sharing WinUI's decoded image cache.
+/// <see cref="Image"/> and <see cref="ImageBrush"/> targets, backed by <see cref="ArtworkCacheManager"/>
+/// so remote covers are cached on disk &amp; in memory and never re-downloaded across views.
 /// </summary>
 public static class BitmapDecodeHelper
 {
     private const int DefaultDecodeWidth = 192;
+    private static readonly BoundedLruCache<string, BitmapImage> DecodedBitmapCache =
+        new(maxCapacity: 180, comparer: StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Identifies the <c>BitmapDecodeHelper.SourceUri</c> attached dependency property.
@@ -73,6 +77,34 @@ public static class BitmapDecodeHelper
             return;
         }
 
+        bool isHttp = string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(uri.Scheme, "http", StringComparison.OrdinalIgnoreCase);
+
+        if (isHttp)
+        {
+            if (ArtworkCacheManager.TryGetCachedFileUri(uri.AbsoluteUri, targetDecodeWidth, out string? cachedFileUri, out _) &&
+                Uri.TryCreate(cachedFileUri, UriKind.Absolute, out Uri? localUri))
+            {
+                ApplyLocalOrAppBitmap(d, localUri, targetDecodeWidth);
+                return;
+            }
+
+            string capturedRaw = rawUri!;
+            string requestUrl = uri.AbsoluteUri;
+            int cacheMinDim = requestUrl.Contains("mzstatic.com/image/thumb/", StringComparison.OrdinalIgnoreCase)
+                ? Math.Max(targetDecodeWidth, 544)
+                : Math.Max(targetDecodeWidth, 544);
+
+            _ = ResolveAndAssignRemoteBitmapAsync(d, capturedRaw, requestUrl, targetDecodeWidth, cacheMinDim);
+            return;
+        }
+
+        ApplyLocalOrAppBitmap(d, uri, targetDecodeWidth);
+    }
+
+    private static void ApplyLocalOrAppBitmap(DependencyObject d, Uri uri, int targetDecodeWidth)
+    {
+        string cacheKey = $"{uri.AbsoluteUri}|{targetDecodeWidth}";
         ImageSource? currentSource = GetTargetSource(d);
         if (currentSource is BitmapImage existing &&
             existing.UriSource is not null &&
@@ -85,18 +117,58 @@ public static class BitmapDecodeHelper
 
         try
         {
-            var bitmap = new BitmapImage
+            if (!DecodedBitmapCache.TryGet(cacheKey, out var bitmap) || bitmap is null)
             {
-                DecodePixelType = DecodePixelType.Logical,
-                DecodePixelWidth = targetDecodeWidth,
-                UriSource = uri
-            };
+                bitmap = new BitmapImage
+                {
+                    DecodePixelType = DecodePixelType.Logical,
+                    DecodePixelWidth = targetDecodeWidth,
+                    UriSource = uri
+                };
+                DecodedBitmapCache.Set(cacheKey, bitmap);
+            }
 
             SetTargetSource(d, bitmap);
         }
         catch
         {
             SetTargetSource(d, null);
+        }
+    }
+
+    private static async Task ResolveAndAssignRemoteBitmapAsync(
+        DependencyObject target,
+        string expectedRawUri,
+        string requestUrl,
+        int targetDecodeWidth,
+        int cacheMinDim)
+    {
+        try
+        {
+            var outcome = await ArtworkCacheManager.GetOrDownloadAsync(requestUrl, cacheMinDim).ConfigureAwait(false);
+            string effectiveUriStr = !string.IsNullOrWhiteSpace(outcome.LocalFileUri)
+                ? outcome.LocalFileUri!
+                : requestUrl;
+
+            if (!Uri.TryCreate(effectiveUriStr, UriKind.Absolute, out Uri? resolvedUri))
+            {
+                return;
+            }
+
+            var dq = target.DispatcherQueue;
+            if (dq is not null)
+            {
+                dq.TryEnqueue(() =>
+                {
+                    if (string.Equals(GetSourceUri(target), expectedRawUri, StringComparison.Ordinal))
+                    {
+                        ApplyLocalOrAppBitmap(target, resolvedUri, targetDecodeWidth);
+                    }
+                });
+            }
+        }
+        catch
+        {
         }
     }
 

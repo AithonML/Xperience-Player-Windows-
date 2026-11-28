@@ -28,9 +28,10 @@ public sealed partial class ShellViewModel
     public event EventHandler<UpdateDialogRequestEventArgs>? UpdateDialogRequested;
 
     /// <summary>
-    /// Gets the formatted current installed application version (e.g., <c>v1.0.0</c>).
+    /// Gets the formatted current installed application version (e.g., <c>v0.2.0.0</c>),
+    /// dynamically resolved from the MSIX package identity or compiled assembly version.
     /// </summary>
-    public string CurrentAppVersionDisplay => _appUpdateService.CurrentVersionDisplay;
+    public string CurrentAppVersionDisplay { get; } = WindowsInstallerLauncher.GetCompiledAppVersionDisplay();
 
     /// <summary>
     /// Gets the Windows architecture display badge (e.g., <c>Windows x64</c>, <c>Windows ARM64</c>).

@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Storage.Streams;
 using Windows.UI;
+using Xperience.App.Services;
+using Xperience.Core.Collections;
 
 namespace Xperience.App.Helpers;
 
@@ -284,6 +286,12 @@ public static class ColorHelperEx
         return DeriveAmbientPaletteFromColor(dominant);
     }
 
+    private static readonly BoundedLruCache<string, Color> DominantColorCache =
+        new(maxCapacity: 128, comparer: StringComparer.OrdinalIgnoreCase);
+
+    private static readonly BoundedLruCache<string, AuroraPalette> AuroraPaletteCache =
+        new(maxCapacity: 128, comparer: StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Asynchronously extracts the dominant vibrant color from an album cover image file, ms-appx URI, or HTTP/HTTPS URL.
     /// Uses a 24-bin HSV hue-vibrancy histogram on a 36x36 downsampled bitmap so extraction takes &lt; 2 ms.
@@ -301,32 +309,69 @@ public static class ColorHelperEx
             return defaultColor;
         }
 
+        string cacheKey = BuildPaletteCacheKey(coverArtUri);
+        if (!string.IsNullOrEmpty(cacheKey) && DominantColorCache.TryGet(cacheKey, out var cachedColor))
+        {
+            return cachedColor;
+        }
+
         try
         {
+            Color extracted = defaultColor;
             if (coverArtUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                 coverArtUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                byte[] imageBytes = await SharedHttpClient.GetByteArrayAsync(coverArtUri, cancellationToken).ConfigureAwait(false);
+                byte[]? imageBytes = await ArtworkCacheManager.GetOrDownloadBytesAsync(coverArtUri, 256, cancellationToken)
+                    .ConfigureAwait(false);
+                if (imageBytes is null || imageBytes.Length == 0)
+                {
+                    return defaultColor;
+                }
+
                 using var memStream = new InMemoryRandomAccessStream();
                 await memStream.WriteAsync(imageBytes.AsBuffer());
                 memStream.Seek(0);
-                return await DecodeAndExtractDominantColorAsync(memStream, defaultColor, cancellationToken).ConfigureAwait(false);
+                extracted = await DecodeAndExtractDominantColorAsync(memStream, defaultColor, cancellationToken).ConfigureAwait(false);
             }
-
-            string? resolvedPath = ResolveLocalImagePath(coverArtUri);
-            if (string.IsNullOrEmpty(resolvedPath) || !File.Exists(resolvedPath))
+            else
             {
-                return defaultColor;
+                string? resolvedPath = ResolveLocalImagePath(coverArtUri);
+                if (string.IsNullOrEmpty(resolvedPath) || !File.Exists(resolvedPath))
+                {
+                    return defaultColor;
+                }
+
+                await using var fileStream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+                using var randomAccessStream = fileStream.AsRandomAccessStream();
+                extracted = await DecodeAndExtractDominantColorAsync(randomAccessStream, defaultColor, cancellationToken).ConfigureAwait(false);
             }
 
-            await using var fileStream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
-            using var randomAccessStream = fileStream.AsRandomAccessStream();
-            return await DecodeAndExtractDominantColorAsync(randomAccessStream, defaultColor, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(cacheKey))
+            {
+                DominantColorCache.Set(cacheKey, extracted);
+            }
+
+            return extracted;
         }
         catch
         {
             return defaultColor;
         }
+    }
+
+    private static string BuildPaletteCacheKey(string uri)
+    {
+        if (uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            var (canonicalKey, _, _) = ArtworkCacheManager.NormalizeArtworkRequest(uri, 256);
+            if (!string.IsNullOrEmpty(canonicalKey))
+            {
+                return canonicalKey;
+            }
+        }
+
+        return uri.Trim();
     }
 
     /// <summary>
@@ -344,17 +389,27 @@ public static class ColorHelperEx
             return AuroraPalette.Default;
         }
 
+        string cacheKey = BuildPaletteCacheKey(coverArtUri);
+        if (!string.IsNullOrEmpty(cacheKey) && AuroraPaletteCache.TryGet(cacheKey, out var cachedPalette))
+        {
+            return cachedPalette;
+        }
+
         try
         {
             byte[]? bytes = null;
             if (coverArtUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                 coverArtUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                byte[] imageBytes = await SharedHttpClient.GetByteArrayAsync(coverArtUri, cancellationToken).ConfigureAwait(false);
-                using var memStream = new InMemoryRandomAccessStream();
-                await memStream.WriteAsync(imageBytes.AsBuffer());
-                memStream.Seek(0);
-                bytes = await DecodeScaledBgra8BytesAsync(memStream).ConfigureAwait(false);
+                byte[]? imageBytes = await ArtworkCacheManager.GetOrDownloadBytesAsync(coverArtUri, 256, cancellationToken)
+                    .ConfigureAwait(false);
+                if (imageBytes is { Length: > 0 })
+                {
+                    using var memStream = new InMemoryRandomAccessStream();
+                    await memStream.WriteAsync(imageBytes.AsBuffer());
+                    memStream.Seek(0);
+                    bytes = await DecodeScaledBgra8BytesAsync(memStream).ConfigureAwait(false);
+                }
             }
             else
             {
@@ -372,7 +427,13 @@ public static class ColorHelperEx
                 return AuroraPalette.Default;
             }
 
-            return await Task.Run(() => ComputeAuroraPaletteFromBgra8(bytes), cancellationToken).ConfigureAwait(false);
+            var palette = await Task.Run(() => ComputeAuroraPaletteFromBgra8(bytes), cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(cacheKey))
+            {
+                AuroraPaletteCache.Set(cacheKey, palette);
+            }
+
+            return palette;
         }
         catch
         {
@@ -725,11 +786,15 @@ public static class ColorHelperEx
             if (imageUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                 imageUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                byte[] imageBytes = await SharedHttpClient.GetByteArrayAsync(imageUri, cancellationToken).ConfigureAwait(false);
-                using var memStream = new InMemoryRandomAccessStream();
-                await memStream.WriteAsync(imageBytes.AsBuffer());
-                memStream.Seek(0);
-                bytes = await DecodeScaledBgra8BytesAsync(memStream).ConfigureAwait(false);
+                byte[]? imageBytes = await ArtworkCacheManager.GetOrDownloadBytesAsync(imageUri, 544, cancellationToken)
+                    .ConfigureAwait(false);
+                if (imageBytes is { Length: > 0 })
+                {
+                    using var memStream = new InMemoryRandomAccessStream();
+                    await memStream.WriteAsync(imageBytes.AsBuffer());
+                    memStream.Seek(0);
+                    bytes = await DecodeScaledBgra8BytesAsync(memStream).ConfigureAwait(false);
+                }
             }
             else
             {

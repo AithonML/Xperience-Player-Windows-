@@ -110,4 +110,52 @@
   <data name="Update_ErrorDownloadFailed" xml:space="preserve"><value>فشل تنزيل التحديث: {0}</value></data>
   <data name="Update_ErrorLaunchFailed" xml:space="preserve"><value>تعذر تشغيل المثبّت المتحقق منه: {0}</value></data>
   <data name="Update_ErrorUacCancelled" xml:space="preserve"><value>تم إلغاء التثبيت من نافذة أذونات Windows (UAC).</value></data>
+  <data name="Settings_NavPlayback.Content" xml:space="preserve"><value>التشغيل والجودة</value></data>
+  <data name="Settings_NavDataUsage.Content" xml:space="preserve"><value>استخدام البيانات</value></data>
+  <data name="Settings_PlaybackTitle.Text" xml:space="preserve"><value>التشغيل وجودة الصوت</value></data>
+  <data name="Settings_PlaybackSubtitle.Text" xml:space="preserve"><value>اضبط جودة البث، وبث FLAC بدون فقدان، والتحميل المسبق بدون فجوات، وسلوك مستوى الصوت.</value></data>
+  <data name="Settings_StreamingQualityTitle.Text" xml:space="preserve"><value>جودة البث عبر الإنترنت</value></data>
+  <data name="Settings_FlacFallbackNote.Text" xml:space="preserve"><value>يتم التحقق من بث FLAC قبل التشغيل. إذا لم يتوفر المسار بصيغة FLAC، فسيتم الرجوع تلقائياً إلى YouTube Music عالي الجودة مع توضيح ذلك في معلومات الأغنية.</value></data>
+  <data name="Settings_GaplessPreloadTitle.Text" xml:space="preserve"><value>التحميل المسبق للأغنية التالية (بدون فجوات)</value></data>
+  <data name="Settings_GaplessPreloadDesc.Text" xml:space="preserve"><value>يُحمّل المسار التالي مسبقاً قبل انتهاء الأغنية الحالية لضمان انتقال سلس.</value></data>
+  <data name="Settings_PauseAtZeroVolumeTitle.Text" xml:space="preserve"><value>إيقاف مؤقت عند مستوى الصوت 0</value></data>
+  <data name="Settings_PauseAtZeroVolumeDesc.Text" xml:space="preserve"><value>يوقف التشغيل مؤقتاً عند خفض صوت التطبيق أو نظام Windows إلى 0 (أو كتمه) ويستأنفه عند رفعهما فوق 0.</value></data>
+  <data name="Settings_DataUsageTitle.Text" xml:space="preserve"><value>استخدام البيانات والقيود</value></data>
+  <data name="Settings_DataUsageSubtitle.Text" xml:space="preserve"><value>راقب استهلاك الشبكة لكل أغنية، وحدد قيود التشغيل التلقائي، ونزّل الأغاني الأكثر استماعاً.</value></data>
+  <data name="Settings_DataUsagePeriodLabel.Text" xml:space="preserve"><value>الشبكة / WiFi (الفترة الحالية)</value></data>
+  <data name="Settings_DataUsageAllTimeLabel.Text" xml:space="preserve"><value>إجمالي استهلاك الشبكة</value></data>
+  <data name="Settings_DataLimitToggleTitle.Text" xml:space="preserve"><value>تفعيل حد استخدام البيانات</value></data>
+  <data name="Settings_DataLimitToggleDesc.Text" xml:space="preserve"><value>يوقف البث تلقائياً عند بلوغ الحد مع إشعار. تظل الأغاني المحلية والمنزّلة تعمل.</value></data>
+  <data name="Settings_SmartDownloadTitle.Text" xml:space="preserve"><value>اقتراحات التنزيل الذكية</value></data>
+  <data name="Settings_SmartDownloadDesc.Text" xml:space="preserve"><value>الأغاني التي تم بثها بشكل متكرر. قم بتنزيلها لتوفير البيانات.</value></data>
+  <data name="Settings_DetailedAnalysisTitle.Text" xml:space="preserve"><value>التحليل التفصيلي لكل أغنية</value></data>
+  <data name="Settings_LocalScanFilterTitle.Text" xml:space="preserve"><value>القائمة السوداء والبيضاء للفحص المحلي</value></data>
+  <data name="Settings_LocalScanRescan.Text" xml:space="preserve"><value>إعادة فحص المكتبة</value></data>
+  <data name="Settings_LocalScanModeLabel.Text" xml:space="preserve"><value>وضع تصفية الفحص</value></data>
+  <data name="Settings_LocalScanGlobalDepthLabel.Text" xml:space="preserve"><value>عمق الفحص العام</value></data>
+  <data name="Settings_AddBlacklistFolder.Text" xml:space="preserve"><value>إضافة إلى القائمة السوداء...</value></data>
+  <data name="Settings_AddWhitelistFolder.Text" xml:space="preserve"><value>إضافة إلى القائمة البيضاء...</value></data>
+  <data name="Settings_DataUsageChartTitle.Text" xml:space="preserve"><value>سجل الاستهلاك</value></data>
+  <data name="Settings_DataUsageChartDesc.Text" xml:space="preserve"><value>عرض استهلاك بيانات الشبكة حسب اليوم أو الأسبوع أو الشهر</value></data>
+  <data name="Settings_DataUsageGranularityHeader.Text" xml:space="preserve"><value>نطاق الرسم البياني</value></data>
+  <data name="Settings_DataUsageGranularityDay.Content" xml:space="preserve"><value>يومي</value></data>
+  <data name="Settings_DataUsageGranularityWeek.Content" xml:space="preserve"><value>أسبوعي</value></data>
+  <data name="Settings_DataUsageGranularityMonth.Content" xml:space="preserve"><value>شهري</value></data>
+  <data name="Settings_DataUsageFilterHeader.Text" xml:space="preserve"><value>تصفية التاريخ</value></data>
+  <data name="Settings_DataUsageFilterAllTime.Content" xml:space="preserve"><value>كل الوقت</value></data>
+  <data name="Settings_DataUsageFilterDay.Content" xml:space="preserve"><value>اليوم</value></data>
+  <data name="Settings_DataUsageFilterWeek.Content" xml:space="preserve"><value>آخر 7 أيام</value></data>
+  <data name="Settings_DataUsageFilterMonth.Content" xml:space="preserve"><value>آخر 30 يوماً</value></data>
+  <data name="Settings_DataUsageFilterCustom.Content" xml:space="preserve"><value>نطاق مخصص</value></data>
+  <data name="Settings_DataUsageSortHeader.Text" xml:space="preserve"><value>ترتيب الأغاني حسب</value></data>
+  <data name="Settings_DataUsageSortHighest.Content" xml:space="preserve"><value>الأعلى استهلاكاً</value></data>
+  <data name="Settings_DataUsageSortDate.Content" xml:space="preserve"><value>الأحدث تاريخاً</value></data>
+  <data name="Settings_DataUsageSortAlpha.Content" xml:space="preserve"><value>أبجدياً (أ-ي)</value></data>
+  <data name="Settings_DataUsageStartDate.Text" xml:space="preserve"><value>تاريخ البدء</value></data>
+  <data name="Settings_DataUsageEndDate.Text" xml:space="preserve"><value>تاريخ الانتهاء</value></data>
+  <data name="Settings_ThemeTitle.Text" xml:space="preserve"><value>المظهر</value></data>
+  <data name="Settings_ThemeSubtitle.Text" xml:space="preserve"><value>اختر المظهر المفضل لديك أو قم بالمزامنة تلقائياً مع إعدادات النظام.</value></data>
+  <data name="Settings_ThemeSystem.Text" xml:space="preserve"><value>النظام</value></data>
+  <data name="Settings_ThemeDark.Text" xml:space="preserve"><value>داكن</value></data>
+  <data name="Settings_ThemeLight.Text" xml:space="preserve"><value>فاتح</value></data>
 </root>

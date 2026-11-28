@@ -679,6 +679,35 @@ public sealed partial class ShellPage
         });
     }
 
+    internal void PauseTrackCanvasForVideoMode()
+    {
+        try
+        {
+            _sidebarCanvasPlayer?.Pause();
+            _fullscreenCanvasPlayer?.Pause();
+        }
+        catch
+        {
+        }
+    }
+
+    internal void ResumeTrackCanvasIfNeeded()
+    {
+        try
+        {
+            if (_trackCanvasExpectedPlaying &&
+                !ViewModel.IsFullscreenVideoMode &&
+                _sidebarCanvasPlayer?.Source is not null &&
+                _sidebarCanvasPlayer.PlaybackSession?.PlaybackState != MediaPlaybackState.Playing)
+            {
+                _sidebarCanvasPlayer.Play();
+            }
+        }
+        catch
+        {
+        }
+    }
+
     private void StopAndHideTrackCanvasSurfaces()
     {
         ++_trackCanvasGeneration;
@@ -848,7 +877,8 @@ public sealed partial class ShellPage
                 if (_sidebarCanvasPlayer is null ||
                     !_trackCanvasExpectedPlaying ||
                     frameGen != _trackCanvasGeneration ||
-                    _sidebarCanvasPlayer.Source is null)
+                    _sidebarCanvasPlayer.Source is null ||
+                    ViewModel.IsFullscreenVideoMode)
                 {
                     return;
                 }

@@ -706,6 +706,44 @@ public sealed class ArtistItem
     public string Id { get; init; } = string.Empty;
 
     /// <summary>
+    /// Gets the optional YouTube Music InnerTube browseId (e.g. <c>UC...</c>) for exact artist navigation.
+    /// </summary>
+    public string BrowseId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Extracts a valid YouTube channel browseId (<c>UC...</c>) from <see cref="BrowseId"/> or <see cref="Id"/>.
+    /// </summary>
+    public string? ExtractChannelBrowseId()
+    {
+        static string? NormalizeCandidate(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            string clean = raw.Trim();
+            if (clean.StartsWith("ytm_sim_", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean[8..];
+            }
+            else if (clean.StartsWith("ytm_artist_", StringComparison.OrdinalIgnoreCase))
+            {
+                clean = clean[11..];
+            }
+
+            if (clean.StartsWith("MPLAUC", StringComparison.Ordinal))
+            {
+                clean = clean[4..];
+            }
+
+            return clean.StartsWith("UC", StringComparison.Ordinal) && clean.Length >= 10 ? clean : null;
+        }
+
+        return NormalizeCandidate(BrowseId) ?? NormalizeCandidate(Id);
+    }
+
+    /// <summary>
     /// Gets the artist's display name.
     /// </summary>
     public string Name { get; init; } = string.Empty;

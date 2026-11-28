@@ -54,10 +54,10 @@ public static partial class YouTubePlayerScriptParser
     [GeneratedRegex(@"signatureTimestamp\s*:\s*(\d+)")]
     private static partial Regex StsRegex();
 
-    [GeneratedRegex(@"\b([A-Za-z0-9_$]+)=function\([A-Za-z0-9_$,]+\)\{[^}]{0,120}=new\s+[A-Za-z0-9_$.]+\(a,!0\);[A-Za-z0-9_$]+\.set\([""']alr[""'],[""']yes[""']\);[^}]{0,240}\}")]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_$.])([A-Za-z0-9_$]+)=function\([A-Za-z0-9_$,]+\)\{[^}]{0,120}=new\s+[A-Za-z0-9_$.]+\(a,!0\);[A-Za-z0-9_$]+\.set\([""']alr[""'],[""']yes[""']\);[^}]{0,240}\}")]
     private static partial Regex PrimarySigFnRegex();
 
-    [GeneratedRegex(@"\b([A-Za-z0-9_$]+)=function\(a,b,c\)\{b=b===void\s+0\?[""']{2}:b;[^}]{0,260}[""']alr[""'],[""']yes[""'][^}]{0,260}\}")]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_$.])([A-Za-z0-9_$]+)=function\(a,b,c\)\{b=b===void\s+0\?[""']{2}:b;[^}]{0,260}[""']alr[""'],[""']yes[""'][^}]{0,260}\}")]
     private static partial Regex FallbackSigFnRegex();
 
     [GeneratedRegex(@"^[A-Za-z0-9_$]+$")]
@@ -129,16 +129,17 @@ public static partial class YouTubePlayerScriptParser
             return null;
         }
 
-        var sb = new StringBuilder(baseJs.Length + 384);
+        var sb = new StringBuilder(baseJs.Length + 512);
         sb.Append(baseJs, 0, endIdx);
-        sb.Append(";g.__xt_transform_url=function(u,sp,s){");
-        sb.Append("var o=").Append(sigFnName).Append("(u,sp||\"\",s||\"\");");
-        sb.Append("for(var k in o){");
-        sb.Append("if(typeof o[k]==='function'){");
-        sb.Append("try{var v=o[k]();if(typeof v==='string'&&v.startsWith('http'))return v;}catch(e){}");
+        sb.Append(";g.__xt_transform_url=function(__xt_u,__xt_sp,__xt_s){");
+        sb.Append("var __xt_res=").Append(sigFnName).Append("(__xt_u,__xt_sp||\"\",__xt_s||\"\");");
+        sb.Append("if(typeof __xt_res==='string'&&__xt_res.startsWith('http'))return __xt_res;");
+        sb.Append("for(var __xt_k in __xt_res){");
+        sb.Append("if(typeof __xt_res[__xt_k]==='function'){");
+        sb.Append("try{var __xt_v=__xt_res[__xt_k]();if(typeof __xt_v==='string'&&__xt_v.startsWith('http'))return __xt_v;}catch(__xt_e){}");
         sb.Append('}');
         sb.Append('}');
-        sb.Append("return String(o);");
+        sb.Append("return String(__xt_res);");
         sb.Append("};");
         sb.Append(baseJs, endIdx, baseJs.Length - endIdx);
         return sb.ToString();
@@ -159,7 +160,7 @@ public sealed class WindowsWebView2PlayerScriptSolver : IPlayerScriptResolver, I
     private static readonly TimeSpan PlayerVersionTtl = TimeSpan.FromHours(6);
     private static readonly TimeSpan LoadTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan EvalTimeout = TimeSpan.FromSeconds(4);
-    private static readonly TimeSpan IdleTeardownDelay = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan IdleTeardownDelay = TimeSpan.FromSeconds(45);
 
     private readonly HttpClient _httpClient;
     private readonly ILogger _logger;

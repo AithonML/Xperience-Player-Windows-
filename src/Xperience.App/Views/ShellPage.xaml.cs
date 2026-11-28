@@ -63,6 +63,9 @@ public sealed partial class ShellPage : Page
     private ArtistPagePalette _currentArtistPalette = ArtistPagePalette.CreateDefault(isLightTheme: false);
     private DispatcherQueueTimer? _artistSkeletonShimmerTimer;
     private double _artistSkeletonShimmerPhase;
+    private Microsoft.UI.WindowId _attachedWindowId;
+    private bool _passthroughSyncQueued;
+    private bool _xamlRootChangedHooked;
     private SolidColorBrush? _artistAmbientBackgroundBrush;
     private SolidColorBrush? _artistCardBackgroundBrush;
     private SolidColorBrush? _artistCardBorderBrush;
@@ -148,7 +151,7 @@ public sealed partial class ShellPage : Page
     private readonly Dictionary<int, int> _queueNeighborShiftDirections = [];
     private DispatcherQueueTimer? _queueAutoScrollTimer;
     private double _queueLastPointerViewportY;
-    private ItemsRepeater? _activeDragQueueItemsControl;
+    private ItemsControl? _activeDragQueueItemsControl;
     private ScrollViewer? _activeDragQueueScrollViewer;
     private FrameworkElement? _activeDragQueueCoordinateHost;
     private CompositionEffectFactory? _fullscreenBackdropBlurFactory;
@@ -285,6 +288,7 @@ public sealed partial class ShellPage : Page
             UpdateLikedPlayAllButtonContrast();
             UpdateLikedRecommendationsShimmerState();
             UpdatePlaylistRelatedShimmerState();
+            SyncDataUsageChartAccent();
         };
         ActualThemeChanged += (_, _) =>
         {
@@ -342,8 +346,10 @@ public sealed partial class ShellPage : Page
         ViewModel.AlbumDetailCanvasVideoChanged += OnAlbumDetailCanvasVideoChanged;
         ViewModel.ArtistDetailHeaderVideoChanged += OnArtistDetailHeaderVideoChanged;
         ViewModel.NowPlayingSidebarVisibilityChanged += OnNowPlayingSidebarVisibilityChanged;
+        ViewModel.NarrowNowPlayingOverlayChanged += OnNarrowNowPlayingOverlayChanged;
         ViewModel.NowPlayingTabTransitionRequested += OnNowPlayingTabTransitionRequested;
         ViewModel.QueueItemAddedNotification += OnQueueItemAddedNotification;
+        ViewModel.Queue.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(OnQueueCollectionChangedResetLayout);
         ViewModel.FullscreenLyricsLayoutChanged += OnFullscreenLyricsLayoutChanged;
         ViewModel.FullscreenSideTabChanged += OnFullscreenSideTabChanged;
         ViewModel.SettingsCategoryTransitionRequested += OnSettingsCategoryTransitionRequested;
@@ -363,6 +369,130 @@ public sealed partial class ShellPage : Page
         ViewModel.LibraryRecentlyAddedPreview.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshLibraryHorizontalCarousels);
         ViewModel.LibraryArtistsPreview.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshLibraryHorizontalCarousels);
         ViewModel.LibraryAlbumsPreview.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshLibraryHorizontalCarousels);
+        Loaded += OnShellPageLoadedForPassthrough;
+        SizeChanged += OnTopBarPassthroughGeometryChanged;
+    }
+
+    internal void AttachWindowNonClientRegions(Microsoft.UI.WindowId windowId)
+    {
+        _attachedWindowId = windowId;
+        HookXamlRootForPassthrough();
+        RefreshTitleBarPassthroughRegions();
+    }
+
+    internal void RefreshTitleBarPassthroughRegions()
+    {
+        if (_attachedWindowId.Value == 0 || _passthroughSyncQueued)
+        {
+            return;
+        }
+
+        _passthroughSyncQueued = true;
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            _passthroughSyncQueued = false;
+            UpdateTitleBarPassthroughRegions();
+        });
+    }
+
+    private void OnShellPageLoadedForPassthrough(object sender, RoutedEventArgs e)
+    {
+        HookXamlRootForPassthrough();
+        RefreshTitleBarPassthroughRegions();
+    }
+
+    private void HookXamlRootForPassthrough()
+    {
+        if (!_xamlRootChangedHooked && XamlRoot is not null)
+        {
+            _xamlRootChangedHooked = true;
+            XamlRoot.Changed += (_, _) => RefreshTitleBarPassthroughRegions();
+        }
+    }
+
+    private void OnTopBarPassthroughGeometryChanged(object sender, SizeChangedEventArgs e)
+    {
+        RefreshTitleBarPassthroughRegions();
+    }
+
+    private void UpdateTitleBarPassthroughRegions()
+    {
+        if (_attachedWindowId.Value == 0 || !IsLoaded || XamlRoot is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var nonClient = InputNonClientPointerSource.GetForWindowId(_attachedWindowId);
+            double scale = XamlRoot.RasterizationScale;
+            if (scale <= 0.0)
+            {
+                scale = 1.0;
+            }
+
+            var rects = new List<Windows.Graphics.RectInt32>(8);
+
+            void TryAddPassthrough(FrameworkElement? element, double inflateDipX = 0.0, double inflateDipY = 0.0)
+            {
+                if (element is null ||
+                    !element.IsLoaded ||
+                    element.Visibility != Visibility.Visible ||
+                    element.Opacity <= 0.01 ||
+                    element.ActualWidth <= 1.0 ||
+                    element.ActualHeight <= 1.0)
+                {
+                    return;
+                }
+
+                var transform = element.TransformToVisual(null);
+                var bounds = transform.TransformBounds(new Rect(
+                    -inflateDipX,
+                    -inflateDipY,
+                    element.ActualWidth + (2.0 * inflateDipX),
+                    element.ActualHeight + (2.0 * inflateDipY)));
+
+                // Only non-client region height near top caption strip needs passthrough,
+                // though registering the full mini-player / top-capsule rect guarantees priority.
+                int x = Math.Max(0, (int)Math.Floor(bounds.X * scale));
+                int y = Math.Max(0, (int)Math.Floor(bounds.Y * scale));
+                int right = (int)Math.Ceiling((bounds.X + bounds.Width) * scale);
+                int bottom = (int)Math.Ceiling((bounds.Y + bounds.Height) * scale);
+                int w = right - x;
+                int h = bottom - y;
+                if (w > 0 && h > 0)
+                {
+                    rects.Add(new Windows.Graphics.RectInt32(x, y, w, h));
+                }
+            }
+
+            if (ViewModel.IsFullscreenNowPlayingOpen)
+            {
+                TryAddPassthrough(FullscreenBackPill, 4.0, 4.0);
+                TryAddPassthrough(FullscreenTopActionBar, 4.0, 4.0);
+            }
+            else
+            {
+                // Give top floating Mini Player priority over window titlebar drag (inflated to cover 22px scrub border)
+                TryAddPassthrough(MiniPlayerBorderHost, 12.0, 12.0);
+                TryAddPassthrough(TopHeaderBrandPill, 2.0, 4.0);
+                TryAddPassthrough(DesktopNavCapsulePanel, 2.0, 4.0);
+                TryAddPassthrough(SearchCapsulePanel, 2.0, 4.0);
+                TryAddPassthrough(TopHeaderSettingsPill, 2.0, 4.0);
+                if (NowPlayingSidebarPanel is { Visibility: Visibility.Visible } && NowPlayingSidebarPanel.Opacity > 0.1)
+                {
+                    TryAddPassthrough(SidebarCloseButtonPill, 2.0, 4.0);
+                    TryAddPassthrough(SidebarSongVideoSwitcherPill, 2.0, 4.0);
+                    TryAddPassthrough(SidebarActionsPill, 2.0, 4.0);
+                }
+            }
+
+            nonClient.SetRegionRects(NonClientRegionKind.Passthrough, rects.ToArray());
+        }
+        catch
+        {
+            // Ignore transient InputNonClientPointerSource errors during teardown or DPI transitions
+        }
     }
 
     /// <summary>
@@ -429,8 +559,21 @@ public sealed partial class ShellPage : Page
     /// </summary>
     public string FormatPercent(double value) => $"{value:0}%";
 
+    private void SyncDataUsageChartAccent()
+    {
+        if (DataUsageChart is null)
+        {
+            return;
+        }
+
+        DataUsageChart.AccentColor = ColorHelperEx.ParseHex(
+            ViewModel.ActiveAccentColorHex,
+            Color.FromArgb(255, 45, 212, 191));
+    }
+
     private async void OnPageLoaded(object sender, RoutedEventArgs e)
     {
+        SyncDataUsageChartAccent();
         InitializeFullscreenMusicVideoFeatures();
         InitializeLyricsVisualFeatures();
         InitializeUpdateFeatures();
@@ -453,6 +596,10 @@ public sealed partial class ShellPage : Page
         if (MiniPlayerBorderHost is not null)
         {
             MiniPlayerBorderHost.AccentColor = _currentAmbientPalette.VibrantAccent;
+        }
+        if (CompactMiniPlayerBorderHost is not null)
+        {
+            CompactMiniPlayerBorderHost.AccentColor = _currentAmbientPalette.VibrantAccent;
         }
 
         _ = UpdateNowPlayingAmbientPaletteAsync();
@@ -537,6 +684,8 @@ public sealed partial class ShellPage : Page
             return;
         }
 
+        ApplyAdaptiveWindowLayout(totalWidth);
+
         double rightSidebarWidth = ViewModel.IsNowPlayingSidebarVisible ? 324.0 : 156.0;
         double miniPlayerWidth = ViewModel.IsNowPlayingSidebarVisible ? 0.0 : 274.0;
         double availableHeaderLeftWidth = totalWidth - rightSidebarWidth - miniPlayerWidth - 48.0;
@@ -581,9 +730,153 @@ public sealed partial class ShellPage : Page
     private double ComputeExpandedSearchWidth()
     {
         double totalWidth = MainWorkspaceContainer?.ActualWidth ?? 1280.0;
+        if (totalWidth < 760.0)
+        {
+            return Math.Clamp(totalWidth - 260.0, 180.0, 296.0);
+        }
+
         double rightReserve = ViewModel.IsNowPlayingSidebarVisible ? 324.0 : 430.0;
         double available = Math.Max(360.0, totalWidth - rightReserve);
         return Math.Clamp(available * 0.32, 236.0, 296.0);
+    }
+
+    private void ApplyAdaptiveWindowLayout(double totalWidth)
+    {
+        ViewModel.UpdateResponsiveWindowWidth(totalWidth);
+
+        bool isCompact = ViewModel.IsCompactLayout;
+
+        if (CatalogContentRootStackPanel is not null)
+        {
+            CatalogContentRootStackPanel.Padding = isCompact
+                ? new Thickness(14, 68, 14, ViewModel.CatalogBottomPadding)
+                : new Thickness(22, 68, 14, ViewModel.CatalogBottomPadding);
+        }
+
+        if (FloatingTopHeaderOverlay is not null)
+        {
+            FloatingTopHeaderOverlay.Padding = isCompact
+                ? new Thickness(14, 12, 0, 0)
+                : new Thickness(22, 12, 0, 0);
+        }
+
+        if (HomeYtmBannerButtonsPanel is not null && HomeYtmBannerButtonsColDef is not null)
+        {
+            if (isCompact)
+            {
+                HomeYtmBannerButtonsColDef.Width = new GridLength(0, GridUnitType.Pixel);
+                Grid.SetRow(HomeYtmBannerButtonsPanel, 1);
+                Grid.SetColumn(HomeYtmBannerButtonsPanel, 0);
+                Grid.SetColumnSpan(HomeYtmBannerButtonsPanel, 2);
+                HomeYtmBannerButtonsPanel.HorizontalAlignment = HorizontalAlignment.Right;
+            }
+            else
+            {
+                HomeYtmBannerButtonsColDef.Width = GridLength.Auto;
+                Grid.SetRow(HomeYtmBannerButtonsPanel, 0);
+                Grid.SetColumn(HomeYtmBannerButtonsPanel, 2);
+                Grid.SetColumnSpan(HomeYtmBannerButtonsPanel, 1);
+                HomeYtmBannerButtonsPanel.HorizontalAlignment = HorizontalAlignment.Right;
+            }
+        }
+
+        if (ArtistDetailHeaderGrid is not null)
+        {
+            ArtistDetailHeaderGrid.MinHeight = isCompact ? 380.0 : 500.0;
+        }
+
+        if (ArtistTitleTextBlock is not null)
+        {
+            ArtistTitleTextBlock.FontSize = isCompact ? 32.0 : 46.0;
+        }
+
+        ApplyDetailSplitLayouts();
+        ApplySettingsNavigationResponsivePaneMode();
+    }
+
+    private void OnDetailSplitGridLoaded(object sender, RoutedEventArgs e)
+    {
+        ApplyDetailSplitLayouts();
+    }
+
+    private void ApplyDetailSplitLayouts()
+    {
+        bool stackVertically = ViewModel.StackDetailHeadersVertically;
+
+        if (AlbumDetailSplitGrid is not null &&
+            AlbumDetailHeroColDef is not null &&
+            AlbumDetailTracksColDef is not null &&
+            AlbumDetailHeroPanel is not null &&
+            AlbumDetailTracksPanel is not null)
+        {
+            if (stackVertically)
+            {
+                AlbumDetailHeroColDef.Width = new GridLength(1, GridUnitType.Star);
+                AlbumDetailTracksColDef.Width = new GridLength(0, GridUnitType.Pixel);
+                AlbumDetailSplitGrid.ColumnSpacing = 0;
+                AlbumDetailHeroPanel.Width = double.NaN;
+                AlbumDetailHeroPanel.MaxWidth = 360;
+                Grid.SetRow(AlbumDetailTracksPanel, 1);
+                Grid.SetColumn(AlbumDetailTracksPanel, 0);
+            }
+            else
+            {
+                AlbumDetailHeroColDef.Width = new GridLength(320, GridUnitType.Pixel);
+                AlbumDetailTracksColDef.Width = new GridLength(1, GridUnitType.Star);
+                AlbumDetailSplitGrid.ColumnSpacing = 48;
+                AlbumDetailHeroPanel.Width = 310;
+                AlbumDetailHeroPanel.MaxWidth = double.PositiveInfinity;
+                Grid.SetRow(AlbumDetailTracksPanel, 0);
+                Grid.SetColumn(AlbumDetailTracksPanel, 1);
+            }
+        }
+
+        if (PlaylistDetailSplitGrid is not null &&
+            PlaylistDetailHeroColDef is not null &&
+            PlaylistDetailTracksColDef is not null &&
+            PlaylistDetailHeroPanel is not null &&
+            PlaylistDetailTracksPanel is not null)
+        {
+            if (stackVertically)
+            {
+                PlaylistDetailHeroColDef.Width = new GridLength(1, GridUnitType.Star);
+                PlaylistDetailTracksColDef.Width = new GridLength(0, GridUnitType.Pixel);
+                PlaylistDetailSplitGrid.ColumnSpacing = 0;
+                PlaylistDetailHeroPanel.Width = double.NaN;
+                PlaylistDetailHeroPanel.MaxWidth = 360;
+                Grid.SetRow(PlaylistDetailTracksPanel, 1);
+                Grid.SetColumn(PlaylistDetailTracksPanel, 0);
+            }
+            else
+            {
+                PlaylistDetailHeroColDef.Width = new GridLength(320, GridUnitType.Pixel);
+                PlaylistDetailTracksColDef.Width = new GridLength(1, GridUnitType.Star);
+                PlaylistDetailSplitGrid.ColumnSpacing = 48;
+                PlaylistDetailHeroPanel.Width = 310;
+                PlaylistDetailHeroPanel.MaxWidth = double.PositiveInfinity;
+                Grid.SetRow(PlaylistDetailTracksPanel, 0);
+                Grid.SetColumn(PlaylistDetailTracksPanel, 1);
+            }
+        }
+    }
+
+    private void ApplySettingsNavigationResponsivePaneMode()
+    {
+        if (SettingsNavigationView is null)
+        {
+            return;
+        }
+
+        bool useTop = ViewModel.UseTopSettingsNavigationPane;
+        var targetMode = useTop
+            ? NavigationViewPaneDisplayMode.Top
+            : NavigationViewPaneDisplayMode.Left;
+
+        if (SettingsNavigationView.PaneDisplayMode != targetMode)
+        {
+            SettingsNavigationView.PaneDisplayMode = targetMode;
+            SettingsNavigationView.IsPaneOpen = !useTop;
+        }
     }
 
     /// <summary>
@@ -847,6 +1140,11 @@ public sealed partial class ShellPage : Page
             FullscreenNowPlayingOverlay.Visibility = Visibility.Collapsed;
             DisposeFullscreenBackdropBlur();
             _fullscreenMusicVideoPlayer?.Pause();
+            if (!ViewModel.IsFullscreenVideoMode)
+            {
+                _loadedFullscreenMusicVideoUri = null;
+                ReplaceMediaSource(_fullscreenMusicVideoPlayer, null);
+            }
             ViewModel.IsFullscreenNowPlayingOpen = false;
             UpdateSidebarEqualizerAnimationState();
         }
@@ -1081,7 +1379,7 @@ public sealed partial class ShellPage : Page
             int count = ViewModel.Queue.Count;
             for (int i = 0; i < count; i++)
             {
-                if (FullscreenQueueItemsControl.TryGetElement(i) is FrameworkElement container)
+                if (GetQueueItemContainer(FullscreenQueueItemsControl, i) is FrameworkElement container)
                 {
                     ApplyEdgeFadeToElement(container);
                 }
@@ -2122,8 +2420,57 @@ public sealed partial class ShellPage : Page
 
     private int _sidebarAnimGeneration;
 
+    private void OnNarrowNowPlayingOverlayChanged(object? sender, bool isOpen)
+    {
+        if (NowPlayingSidebarPanel is null || MainWorkspaceContainer is null)
+        {
+            return;
+        }
+
+        // Cancel any in-flight sidebar collapse/expand animation
+        ++_sidebarAnimGeneration;
+
+        if (isOpen)
+        {
+            Grid.SetColumn(NowPlayingSidebarPanel, 0);
+            Grid.SetColumnSpan(NowPlayingSidebarPanel, 2);
+            Canvas.SetZIndex(NowPlayingSidebarPanel, 20);
+            MainWorkspaceContainer.Padding = new Thickness(0);
+            MainWorkspaceContainer.ColumnSpacing = 0;
+            NowPlayingSidebarPanel.Visibility = Visibility.Visible;
+            NowPlayingSidebarPanel.Translation = Vector3.Zero;
+            NowPlayingSidebarPanel.Opacity = 1.0;
+
+            if (ViewModel.IsFullscreenVideoMode && !string.IsNullOrWhiteSpace(ViewModel.CurrentMusicVideoStreamUri))
+            {
+                _ = ApplyFullscreenMusicVideoStateAsync(ViewModel.CurrentMusicVideoStreamUri, true);
+            }
+        }
+        else
+        {
+            Grid.SetColumn(NowPlayingSidebarPanel, 1);
+            Grid.SetColumnSpan(NowPlayingSidebarPanel, 1);
+            Canvas.SetZIndex(NowPlayingSidebarPanel, 0);
+            MainWorkspaceContainer.Padding = new Thickness(12, 0, 0, 0);
+
+            bool showDesktopSidebar = ViewModel.IsNowPlayingSidebarVisible && ViewModel.IsWideLayout;
+            WorkspaceRightSidebarColumn.Width = new GridLength(showDesktopSidebar ? 324.0 : 0.0, GridUnitType.Pixel);
+            MainWorkspaceContainer.ColumnSpacing = 0.0;
+            NowPlayingSidebarPanel.Visibility = showDesktopSidebar ? Visibility.Visible : Visibility.Collapsed;
+            NowPlayingSidebarPanel.Translation = showDesktopSidebar ? Vector3.Zero : new Vector3(350.0f, 0.0f, 0.0f);
+            NowPlayingSidebarPanel.Opacity = showDesktopSidebar ? 1.0 : 0.0;
+        }
+
+        LiquidGlassBackdropManager.NotifyViewportScrolled();
+        RefreshTitleBarPassthroughRegions();
+    }
+
     private async void OnNowPlayingSidebarVisibilityChanged(object? sender, bool isVisible)
     {
+        if (ViewModel.IsNarrowNowPlayingOverlayOpen)
+        {
+            return;
+        }
         int gen = ++_sidebarAnimGeneration;
         const double expandedWidth = 324.0;
         const double expandedSpacing = 16.0;
@@ -2167,11 +2514,11 @@ public sealed partial class ShellPage : Page
             }
             // Keep at least 156px reserved on the right of the top header so buttons never overlap Windows caption (- □ ×) buttons
             HeaderRightSidebarColumn.Width = new GridLength(Math.Max(156.0, curW), GridUnitType.Pixel);
-            MainWorkspaceContainer.ColumnSpacing = curSpacing;
-            LibraryFloatingOverlayGrid.ColumnSpacing = curSpacing;
+            MainWorkspaceContainer.ColumnSpacing = 0.0;
+            LibraryFloatingOverlayGrid.ColumnSpacing = 0.0;
             if (LikedFloatingOverlayGrid is not null)
             {
-                LikedFloatingOverlayGrid.ColumnSpacing = curSpacing;
+                LikedFloatingOverlayGrid.ColumnSpacing = 0.0;
             }
             FloatingTopHeaderOverlay.ColumnSpacing = curSpacing;
 
@@ -2190,11 +2537,11 @@ public sealed partial class ShellPage : Page
                 LikedOverlayRightSidebarColumn.Width = new GridLength(targetWidth, GridUnitType.Pixel);
             }
             HeaderRightSidebarColumn.Width = new GridLength(Math.Max(156.0, targetWidth), GridUnitType.Pixel);
-            MainWorkspaceContainer.ColumnSpacing = isVisible ? expandedSpacing : 0.0;
-            LibraryFloatingOverlayGrid.ColumnSpacing = isVisible ? expandedSpacing : 0.0;
+            MainWorkspaceContainer.ColumnSpacing = 0.0;
+            LibraryFloatingOverlayGrid.ColumnSpacing = 0.0;
             if (LikedFloatingOverlayGrid is not null)
             {
-                LikedFloatingOverlayGrid.ColumnSpacing = isVisible ? expandedSpacing : 0.0;
+                LikedFloatingOverlayGrid.ColumnSpacing = 0.0;
             }
             FloatingTopHeaderOverlay.ColumnSpacing = isVisible ? expandedSpacing : 0.0;
             NowPlayingSidebarPanel.Translation = new Vector3(targetTransX, 0.0f, 0.0f);
@@ -2204,6 +2551,8 @@ public sealed partial class ShellPage : Page
             {
                 NowPlayingSidebarPanel.Visibility = Visibility.Collapsed;
             }
+
+            RefreshTitleBarPassthroughRegions();
 
             UpdateLikedResponsiveLayout();
             SyncAllSlicers(animate: false);
@@ -2332,6 +2681,7 @@ public sealed partial class ShellPage : Page
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     MiniPlayerBorderHost?.ResetForTrackChange();
+                    CompactMiniPlayerBorderHost?.ResetForTrackChange();
                     _ = UpdateNowPlayingAmbientPaletteAsync();
                     _ = RefreshArtistPagePaletteForThemeAsync();
                     _ = RefreshAlbumPagePaletteForThemeAsync();
@@ -2343,10 +2693,9 @@ public sealed partial class ShellPage : Page
                     LibraryAlphabetRail?.RefreshVisuals();
                     LikedAlphabetRail?.RefreshVisuals();
                     UpdateLikedPlayAllButtonContrast();
+                    SyncDataUsageChartAccent();
                 });
                 break;
-
-            case nameof(ShellViewModel.ActiveAccentColorHex):
             case nameof(ShellViewModel.IsLightMode):
                 DispatcherQueue.TryEnqueue(() =>
                 {
@@ -2407,7 +2756,14 @@ public sealed partial class ShellPage : Page
                     UpdateSidebarEqualizerAnimationState();
                     UpdateResponsiveNavBarMode();
                     SyncSidebarSquigglyProgress();
+                    RefreshTitleBarPassthroughRegions();
                 });
+                break;
+
+            case nameof(ShellViewModel.IsFullscreenNowPlayingOpen):
+            case nameof(ShellViewModel.MiniPlayerHeaderVisibility):
+            case nameof(ShellViewModel.IsCurrentTrackMusicVideoAvailable):
+                DispatcherQueue.TryEnqueue(RefreshTitleBarPassthroughRegions);
                 break;
 
             case nameof(ShellViewModel.HomeAuroraVisibility):
@@ -3296,6 +3652,12 @@ public sealed partial class ShellPage : Page
 
     private void OnMiniPlayerClicked(object? sender, EventArgs e)
     {
+        if (ViewModel.IsMediumOrCompactLayout)
+        {
+            ViewModel.OpenCompactNowPlayingCommand.Execute(null);
+            return;
+        }
+
         if (!ViewModel.IsNowPlayingSidebarVisible)
         {
             ViewModel.ToggleNowPlayingSidebarCommand.Execute(null);
@@ -3478,26 +3840,31 @@ public sealed partial class ShellPage : Page
                 idx = ViewModel.Queue.Count - 1;
             }
 
-            if (idx >= 0 && SidebarQueueItemsControl.TryGetElement(idx) is UIElement container)
+            if (idx >= 0 && GetQueueItemContainer(SidebarQueueItemsControl, idx) is UIElement container)
             {
-                container.Opacity = 0.0f;
-                container.Translation = new Vector3(0.0f, 18.0f, 0.0f);
-                container.Scale = new Vector3(0.92f, 0.92f, 1.0f);
+                ElementCompositionPreview.SetIsTranslationEnabled(container, true);
+                var visual = ElementCompositionPreview.GetElementVisual(container);
+                if (container is FrameworkElement fe)
+                {
+                    visual.CenterPoint = new Vector3((float)(fe.ActualWidth * 0.5), (float)(fe.ActualHeight * 0.5), 0f);
+                }
+
+                container.Opacity = 0.0;
+                visual.Properties.InsertVector3("Translation", new Vector3(0.0f, 18.0f, 0.0f));
+                visual.Scale = new Vector3(0.92f, 0.92f, 1.0f);
 
                 for (int step = 1; step <= 10; step++)
                 {
                     double t = step / 10.0;
                     double ease = 1.0 - Math.Pow(1.0 - t, 3.0);
-                    container.Opacity = (float)Math.Clamp(ease * 1.1, 0.0, 1.0);
-                    container.Translation = new Vector3(0.0f, (float)(18.0 * (1.0 - ease)), 0.0f);
+                    container.Opacity = Math.Clamp(ease * 1.1, 0.0, 1.0);
+                    visual.Properties.InsertVector3("Translation", new Vector3(0.0f, (float)(18.0 * (1.0 - ease)), 0.0f));
                     float sc = (float)(0.92 + (0.08 * ease));
-                    container.Scale = new Vector3(sc, sc, 1.0f);
+                    visual.Scale = new Vector3(sc, sc, 1.0f);
                     await Task.Delay(12);
                 }
 
-                container.Opacity = 1.0f;
-                container.Translation = Vector3.Zero;
-                container.Scale = Vector3.One;
+                ResetContainerVisualImmediate(container);
             }
         }
         catch
@@ -3691,6 +4058,7 @@ public sealed partial class ShellPage : Page
 
     private void OnSettingsNavigationViewLoaded(object sender, RoutedEventArgs e)
     {
+        ApplySettingsNavigationResponsivePaneMode();
         SyncSettingsNavigationViewSelection(ViewModel.SelectedSettingsCategory);
     }
 
@@ -3710,6 +4078,38 @@ public sealed partial class ShellPage : Page
             {
                 ViewModel.SelectSettingsCategoryCommand.Execute(categoryTag);
             }
+        }
+    }
+
+    private async void OnToggleFolderRuleListTypeClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Xperience.Core.Domain.Models.FolderScanRule rule })
+        {
+            await ViewModel.ToggleFolderRuleListTypeAsync(rule);
+        }
+    }
+
+    private async void OnCycleFolderRuleDepthClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Xperience.Core.Domain.Models.FolderScanRule rule })
+        {
+            await ViewModel.CycleFolderRuleDepthModeAsync(rule);
+        }
+    }
+
+    private async void OnRemoveFolderRuleClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Xperience.Core.Domain.Models.FolderScanRule rule })
+        {
+            await ViewModel.RemoveFolderRuleAsync(rule);
+        }
+    }
+
+    private async void OnDownloadSuggestedTrackClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Xperience.Core.Domain.Models.DataUsageDownloadSuggestionItem item })
+        {
+            await ViewModel.DownloadSuggestedTrackAsync(item);
         }
     }
 
@@ -3737,6 +4137,8 @@ public sealed partial class ShellPage : Page
             SettingsCategory.YouTubeMusicAccount => SettingsNavYouTube,
             SettingsCategory.DownloadsAndOffline => SettingsNavDownloads,
             SettingsCategory.LyricsAndVisualizers => SettingsNavLyrics,
+            SettingsCategory.PlaybackAndQuality => SettingsNavPlayback,
+            SettingsCategory.DataUsage => SettingsNavDataUsage,
             SettingsCategory.Updates => SettingsNavUpdates,
             _ => SettingsNavAppearance
         };
@@ -3758,6 +4160,10 @@ public sealed partial class ShellPage : Page
     private async void OnSettingsCategoryTransitionRequested(object? sender, SettingsCategory category)
     {
         SyncSettingsNavigationViewSelection(category);
+        if (category == SettingsCategory.DataUsage)
+        {
+            ViewModel.RefreshDataUsageSummary();
+        }
 
         if (SettingsCategoryContentHost is null)
         {
@@ -5043,6 +5449,11 @@ public sealed partial class ShellPage : Page
             MiniPlayerBorderHost.AccentColor = targetVibrant;
         }
 
+        if (CompactMiniPlayerBorderHost is not null)
+        {
+            CompactMiniPlayerBorderHost.AccentColor = targetVibrant;
+        }
+
         if (SidebarSynchronizedLyricsControl is not null)
         {
             SidebarSynchronizedLyricsControl.AccentColor = targetVibrant;
@@ -5056,6 +5467,11 @@ public sealed partial class ShellPage : Page
         UpdateLyricsStateAccentColor(targetVibrant);
 
         UpdateSidebarAccentTintElements(targetVibrant);
+
+        if (DataUsageChart is not null)
+        {
+            DataUsageChart.AccentColor = targetVibrant;
+        }
 
         const int steps = 20;
         for (int i = 1; i <= steps; i++)
@@ -5171,8 +5587,12 @@ public sealed partial class ShellPage : Page
 
     private Task RefreshArtistPagePaletteForThemeAsync()
     {
-        if (ViewModel.ActiveSubView != WorkspaceSubView.ArtistDetail &&
-            string.IsNullOrWhiteSpace(_lastArtistAmbientImageUri) &&
+        if (ViewModel.ActiveSubView != WorkspaceSubView.ArtistDetail)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (string.IsNullOrWhiteSpace(_lastArtistAmbientImageUri) &&
             string.IsNullOrWhiteSpace(_lastArtistAmbientSeedHex))
         {
             ArtistPagePalette def = ArtistPagePalette.CreateDefault(ViewModel.IsLightMode);
@@ -5308,8 +5728,12 @@ public sealed partial class ShellPage : Page
 
     private Task RefreshAlbumPagePaletteForThemeAsync()
     {
-        if (ViewModel.ActiveSubView != WorkspaceSubView.AlbumDetail &&
-            string.IsNullOrWhiteSpace(_lastAlbumAmbientCoverUri))
+        if (ViewModel.ActiveSubView != WorkspaceSubView.AlbumDetail)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (string.IsNullOrWhiteSpace(_lastAlbumAmbientCoverUri))
         {
             AlbumPagePalette def = AlbumPagePalette.CreateDefault(ViewModel.IsLightMode);
             _currentAlbumPalette = def;
@@ -5439,8 +5863,12 @@ public sealed partial class ShellPage : Page
 
     private Task RefreshPlaylistPagePaletteForThemeAsync()
     {
-        if (ViewModel.ActiveSubView != WorkspaceSubView.PlaylistDetail &&
-            string.IsNullOrWhiteSpace(_lastPlaylistAmbientCoverUri))
+        if (ViewModel.ActiveSubView != WorkspaceSubView.PlaylistDetail)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (string.IsNullOrWhiteSpace(_lastPlaylistAmbientCoverUri))
         {
             AlbumPagePalette def = AlbumPagePalette.CreateDefault(ViewModel.IsLightMode);
             _currentPlaylistPalette = def;
@@ -6159,6 +6587,11 @@ public sealed partial class ShellPage : Page
         {
             MiniPlayerBorderHost.Progress = progress;
         }
+
+        if (CompactMiniPlayerBorderHost is not null && !CompactMiniPlayerBorderHost.IsScrubbing)
+        {
+            CompactMiniPlayerBorderHost.Progress = progress;
+        }
     }
 
     private void OnSidebarSquigglySeekRequested(object? sender, double progress)
@@ -6359,7 +6792,7 @@ public sealed partial class ShellPage : Page
     private void StartQueueDrag(
         object sender,
         PointerRoutedEventArgs e,
-        ItemsRepeater? itemsControl,
+        ItemsControl? itemsControl,
         ScrollViewer? scrollViewer,
         FrameworkElement? coordHost)
     {
@@ -6379,7 +6812,7 @@ public sealed partial class ShellPage : Page
             return;
         }
 
-        var container = itemsControl?.TryGetElement(index);
+        var container = GetQueueItemContainer(itemsControl, index);
         if (container is null)
         {
             return;
@@ -6551,7 +6984,7 @@ public sealed partial class ShellPage : Page
         {
             for (int i = 0; i < count; i++)
             {
-                if (SidebarQueueItemsControl.TryGetElement(i) is UIElement c)
+                if (GetQueueItemContainer(SidebarQueueItemsControl, i) is UIElement c)
                 {
                     ResetContainerVisualImmediate(c);
                 }
@@ -6562,7 +6995,7 @@ public sealed partial class ShellPage : Page
         {
             for (int i = 0; i < count; i++)
             {
-                if (FullscreenQueueItemsControl.TryGetElement(i) is UIElement c)
+                if (GetQueueItemContainer(FullscreenQueueItemsControl, i) is UIElement c)
                 {
                     ResetContainerVisualImmediate(c);
                 }
@@ -6646,7 +7079,7 @@ public sealed partial class ShellPage : Page
             if (shift != previousShift)
             {
                 _queueNeighborShiftDirections[i] = shift;
-                if (itemsControl.TryGetElement(i) is UIElement neighbor)
+                if (GetQueueItemContainer(itemsControl, i) is UIElement neighbor)
                 {
                     AnimateNeighborQueueDisplacement(neighbor, targetOffsetY: shift * (float)itemStep);
                 }
@@ -6719,17 +7152,50 @@ public sealed partial class ShellPage : Page
         }
     }
 
+    private static UIElement? GetQueueItemContainer(ItemsControl? control, int index)
+    {
+        if (control is null || index < 0)
+        {
+            return null;
+        }
+
+        return control.ContainerFromIndex(index) as UIElement;
+    }
+
+    private void OnQueueCollectionChangedResetLayout()
+    {
+        if (_draggedQueueTrack is not null)
+        {
+            return;
+        }
+
+        _queueNeighborShiftDirections.Clear();
+        ResetAllQueueContainerVisuals();
+        if (ViewModel.IsFullscreenNowPlayingOpen)
+        {
+            UpdateFullscreenQueueEdgeFade();
+        }
+    }
+
     private static void ResetContainerVisualImmediate(UIElement container)
     {
-        ElementCompositionPreview.SetIsTranslationEnabled(container, true);
-        var v = ElementCompositionPreview.GetElementVisual(container);
-        v.StopAnimation("Translation");
-        v.StopAnimation("Scale");
-        v.StopAnimation("RotationAngleInDegrees");
-        v.Properties.InsertVector3("Translation", Vector3.Zero);
-        v.Scale = Vector3.One;
-        v.RotationAngleInDegrees = 0f;
-        Canvas.SetZIndex(container, 0);
+        try
+        {
+            container.Opacity = 1.0;
+            ElementCompositionPreview.SetIsTranslationEnabled(container, true);
+            var v = ElementCompositionPreview.GetElementVisual(container);
+            v.StopAnimation("Translation");
+            v.StopAnimation("Scale");
+            v.StopAnimation("RotationAngleInDegrees");
+            v.Properties.InsertVector3("Translation", Vector3.Zero);
+            v.Scale = Vector3.One;
+            v.RotationAngleInDegrees = 0f;
+            Canvas.SetZIndex(container, 0);
+        }
+        catch
+        {
+            // Never throw from ItemsRepeater ElementPrepared/ElementClearing WinRT callbacks
+        }
     }
 
     private static void ApplyQueueCardGrabImpulse(UIElement container)

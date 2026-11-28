@@ -228,6 +228,7 @@ public sealed partial class ShellViewModel
 
             if (result is not null && !string.IsNullOrWhiteSpace(result.VideoUri))
             {
+                RecordExternalCanvasDataUsage(track, result.VideoUri, result.ProviderName);
                 _dispatcherQueue.TryEnqueue(() =>
                 {
                     if (!token.IsCancellationRequested &&

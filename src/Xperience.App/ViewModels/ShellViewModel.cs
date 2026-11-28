@@ -32,6 +32,7 @@ public sealed partial class ShellViewModel : ObservableObject
     private readonly ILocalizationService _localizationService;
     private readonly INavigationService _navigationService;
     private readonly IStorageService _storageService;
+    private readonly IDataUsageService _dataUsageService;
     private readonly IAppUpdateService _appUpdateService;
     private readonly WindowsInstallerLauncher _installerLauncher;
     private readonly ILogger<ShellViewModel> _logger;
@@ -83,6 +84,8 @@ public sealed partial class ShellViewModel : ObservableObject
     private bool _isSuppressingDownloadOptionsSave;
     private bool _isSuppressingQueueSync;
     private bool _isHydratingPlayerUiSettings;
+    private PlayerUiSettings _persistedPlayerUiSettings = new();
+    private long _lastPlaybackSessionPersistTickMs;
     private bool _isSuppressingSearchQueryChange;
     private bool _hasLoadedMoodsAndGenres;
     private bool _hasLoadedRecentSearches;
@@ -714,6 +717,8 @@ public sealed partial class ShellViewModel : ObservableObject
         {
             LikedIndexChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        RefreshResponsiveLayoutState();
     }
 
     partial void OnActiveSubViewChanged(WorkspaceSubView value)
@@ -722,6 +727,8 @@ public sealed partial class ShellViewModel : ObservableObject
         {
             LikedIndexChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        RefreshResponsiveLayoutState();
     }
 
     partial void OnIsSearchPageOpenChanged(bool value)
@@ -730,6 +737,8 @@ public sealed partial class ShellViewModel : ObservableObject
         {
             LikedIndexChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        RefreshResponsiveLayoutState();
     }
 
     partial void OnSelectedLikedFilterChanged(LikedFilterTab value)
@@ -809,7 +818,14 @@ public sealed partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DiscoveryLoadingVisibility))]
+    [NotifyPropertyChangedFor(nameof(IsHomeSkeletonActive))]
+    [NotifyPropertyChangedFor(nameof(HomeSkeletonVisibility))]
     public partial bool IsLoadingDiscovery { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsHomeSkeletonActive))]
+    [NotifyPropertyChangedFor(nameof(HomeSkeletonVisibility))]
+    public partial bool IsHomeFeedInitialLoading { get; set; } = true;
 
     [ObservableProperty]
     public partial string HomePersonalizedSubtitle { get; set; } = "Personalized recommendations from your recent listening";
@@ -1106,6 +1122,8 @@ public sealed partial class ShellViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(SettingsDownloadsCategoryVisibility))]
     [NotifyPropertyChangedFor(nameof(SettingsLyricsCategoryVisibility))]
     [NotifyPropertyChangedFor(nameof(SettingsUpdatesCategoryVisibility))]
+    [NotifyPropertyChangedFor(nameof(SettingsPlaybackCategoryVisibility))]
+    [NotifyPropertyChangedFor(nameof(SettingsDataUsageCategoryVisibility))]
     [NotifyPropertyChangedFor(nameof(SettingsAppearanceVisibility))]
     [NotifyPropertyChangedFor(nameof(SettingsLibraryFoldersVisibility))]
     [NotifyPropertyChangedFor(nameof(SettingsYouTubeAccountVisibility))]
@@ -1118,12 +1136,16 @@ public sealed partial class ShellViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsSettingsDownloadsActive))]
     [NotifyPropertyChangedFor(nameof(IsSettingsLyricsVisualizersActive))]
     [NotifyPropertyChangedFor(nameof(IsSettingsUpdatesActive))]
+    [NotifyPropertyChangedFor(nameof(IsSettingsPlaybackActive))]
+    [NotifyPropertyChangedFor(nameof(IsSettingsDataUsageActive))]
     [NotifyPropertyChangedFor(nameof(SettingsCatAppearanceActiveOpacity))]
     [NotifyPropertyChangedFor(nameof(SettingsCatLibraryActiveOpacity))]
     [NotifyPropertyChangedFor(nameof(SettingsCatYouTubeActiveOpacity))]
     [NotifyPropertyChangedFor(nameof(SettingsCatDownloadsActiveOpacity))]
     [NotifyPropertyChangedFor(nameof(SettingsCatLyricsActiveOpacity))]
     [NotifyPropertyChangedFor(nameof(SettingsCatUpdatesActiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(SettingsCatPlaybackActiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(SettingsCatDataUsageActiveOpacity))]
     public partial SettingsCategory SelectedSettingsCategory { get; set; } = SettingsCategory.AppearanceAndGlass;
 
     [ObservableProperty]
@@ -1273,11 +1295,14 @@ public sealed partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SearchBoxVisibility))]
+    [NotifyPropertyChangedFor(nameof(DesktopSearchCapsuleVisibility))]
     public partial bool IsSearchExpanded { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SettingsStudioVisibility))]
     public partial bool IsSettingsStudioOpen { get; set; }
+
+    partial void OnIsSettingsStudioOpenChanged(bool value) => RefreshResponsiveLayoutState();
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DraggableLensVisibility))]
@@ -1286,6 +1311,22 @@ public sealed partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LightDarkModeGlyph))]
     public partial bool IsLightMode { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ThemeSystemActiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(ThemeSystemInactiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(ThemeDarkActiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(ThemeDarkInactiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(ThemeLightActiveOpacity))]
+    [NotifyPropertyChangedFor(nameof(ThemeLightInactiveOpacity))]
+    public partial AppThemePreference ThemePreference { get; set; } = AppThemePreference.Dark;
+
+    public double ThemeSystemActiveOpacity => ThemePreference == AppThemePreference.System ? 1.0 : 0.0;
+    public double ThemeSystemInactiveOpacity => ThemePreference == AppThemePreference.System ? 0.0 : 1.0;
+    public double ThemeDarkActiveOpacity => ThemePreference == AppThemePreference.Dark ? 1.0 : 0.0;
+    public double ThemeDarkInactiveOpacity => ThemePreference == AppThemePreference.Dark ? 0.0 : 1.0;
+    public double ThemeLightActiveOpacity => ThemePreference == AppThemePreference.Light ? 1.0 : 0.0;
+    public double ThemeLightInactiveOpacity => ThemePreference == AppThemePreference.Light ? 0.0 : 1.0;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NowPlayingSidebarToggleGlyph))]
@@ -1314,8 +1355,11 @@ public sealed partial class ShellViewModel : ObservableObject
     public partial double VolumePercent { get; set; } = 85.0;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsFullscreenVisualizerActive))]
     [NotifyPropertyChangedFor(nameof(FullscreenMenuVisualizerItemVisibility))]
     public partial bool IsFullscreenNowPlayingOpen { get; set; }
+
+    partial void OnIsFullscreenNowPlayingOpenChanged(bool value) => RefreshResponsiveLayoutState();
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FullscreenLyricsColumnVisibility))]
@@ -1349,26 +1393,22 @@ public sealed partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsGpuVisualizerActive))]
+    [NotifyPropertyChangedFor(nameof(IsFullscreenVisualizerActive))]
     [NotifyPropertyChangedFor(nameof(SelectedVisualizerDisplayName))]
     public partial VisualizerDefinition SelectedVisualizer { get; set; } = new VisualizerDefinition
     {
-        Id = "NeonTerrainPeaks",
-        Name = "Neon Terrain Peaks 3D",
+        Id = "BackdropOnly",
+        Name = "Cover Backdrop Only (Off)",
         Author = "Xperience Studio",
-        Description = "3D perspective multi-layer wave terrain with vertical spectrum needle peaks and glowing particles.",
-        RenderMode = VisualizerRenderMode.NeonTerrainPeaks,
-        UseDynamicCoverAccent = false,
-        ColorPaletteHex = ["#FFFFBE0B", "#FF38B000", "#FF9D4EDD", "#FFFF007F", "#FF00F5D4", "#FF00BBF9"],
-        Sensitivity = 1.35,
+        Description = "Displays only the atmospheric album cover backdrop without 3D spectrum geometry.",
+        RenderMode = VisualizerRenderMode.None,
+        UseDynamicCoverAccent = true,
+        Sensitivity = 1.0,
         Speed = 1.0,
-        GridResolution = 58,
-        WaveLayers = 7,
-        ParticleCount = 68,
-        BassDeformation = 1.45,
-        MidDeformation = 1.15,
-        TrebleDeformation = 1.30,
-        BloomRadius = 14.0,
-        BackgroundDimOpacity = 0.72
+        GridResolution = 32,
+        WaveLayers = 4,
+        ParticleCount = 0,
+        BackgroundDimOpacity = 0.55
     };
 
     [ObservableProperty]
@@ -1427,6 +1467,9 @@ public sealed partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     public partial double CurrentPositionSeconds { get; set; }
+
+    [ObservableProperty]
+    public partial double LyricsPositionSeconds { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSeekCurrentTrack))]
@@ -1629,6 +1672,11 @@ public sealed partial class ShellViewModel : ObservableObject
     /// Gets a value indicating whether a GPU spectrum visualizer is currently active.
     /// </summary>
     public bool IsGpuVisualizerActive => SelectedVisualizer.RenderMode != VisualizerRenderMode.None;
+
+    /// <summary>
+    /// Gets whether the Fullscreen GPU visualizer Win2D canvas should be loaded and actively rendering.
+    /// </summary>
+    public bool IsFullscreenVisualizerActive => IsFullscreenNowPlayingOpen && IsGpuVisualizerActive;
 
     /// <summary>
     /// Gets the display name of the currently active visualizer.
@@ -1958,6 +2006,14 @@ public sealed partial class ShellViewModel : ObservableObject
 
     public Visibility DiscoveryLoadingVisibility => IsLoadingDiscovery ? Visibility.Visible : Visibility.Collapsed;
 
+    public bool IsHomeSkeletonActive =>
+        (IsHomeFeedInitialLoading || IsLoadingDiscovery) &&
+        HomeTopPicks.Count == 0 &&
+        HomeRecentlyPlayedAlbums.Count == 0 &&
+        HomeMoreLike1.Count == 0;
+
+    public Visibility HomeSkeletonVisibility => IsHomeSkeletonActive ? Visibility.Visible : Visibility.Collapsed;
+
     // Settings category visibilities & active indicators
     public Visibility SettingsAppearanceCategoryVisibility => SelectedSettingsCategory == SettingsCategory.AppearanceAndGlass ? Visibility.Visible : Visibility.Collapsed;
     public Visibility SettingsLibraryCategoryVisibility => SelectedSettingsCategory == SettingsCategory.LibraryAndFolders ? Visibility.Visible : Visibility.Collapsed;
@@ -2184,6 +2240,11 @@ public sealed partial class ShellViewModel : ObservableObject
             ? Visibility.Visible
             : Visibility.Collapsed;
 
+    public Visibility HasHomeRelatedArtistsVisibility =>
+        HomeRelatedArtists.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
     // Filter active helpers for compiled x:Bind
     public bool IsFilterAll => SelectedCategory == SearchCategoryFilter.All;
     public bool IsFilterSongs => SelectedCategory == SearchCategoryFilter.Songs;
@@ -2338,13 +2399,15 @@ public sealed partial class ShellViewModel : ObservableObject
     /// <summary>
     /// Gets the glyph for toggling the right-hand Now Playing sidebar panel.
     /// </summary>
-    public string NowPlayingSidebarToggleGlyph => IsNowPlayingSidebarVisible ? "\uE8A0" : "\uE89F";
+    public string NowPlayingSidebarToggleGlyph => IsNarrowNowPlayingOverlayOpen
+        ? "\uE72B"
+        : (IsNowPlayingSidebarVisible ? "\uE8A0" : "\uE89F");
 
     /// <summary>
     /// Gets the visibility of the top header mini-player capsule.
     /// Only visible when the Now Playing right sidebar is hidden, freeing maximum header width for navigation.
     /// </summary>
-    public Visibility MiniPlayerHeaderVisibility => !IsNowPlayingSidebarVisible ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MiniPlayerHeaderVisibility => (!IsNowPlayingSidebarVisible && !IsCompactLayout) ? Visibility.Visible : Visibility.Collapsed;
 
     /// <summary>
     /// Gets the dynamic title for the Library workspace header (matching Android LibraryScreen).
@@ -2418,6 +2481,7 @@ public sealed partial class ShellViewModel : ObservableObject
         ILocalizationService localizationService,
         INavigationService navigationService,
         IStorageService storageService,
+        IDataUsageService dataUsageService,
         IAppUpdateService appUpdateService,
         WindowsInstallerLauncher installerLauncher,
         ILogger<ShellViewModel> logger)
@@ -2432,6 +2496,7 @@ public sealed partial class ShellViewModel : ObservableObject
         _localizationService = localizationService;
         _navigationService = navigationService;
         _storageService = storageService;
+        _dataUsageService = dataUsageService;
         _appUpdateService = appUpdateService;
         _installerLauncher = installerLauncher;
         _logger = logger;
@@ -2442,6 +2507,9 @@ public sealed partial class ShellViewModel : ObservableObject
         _audioPlayerService.PositionChanged += OnAudioPositionChanged;
         _audioPlayerService.QueueChanged += OnAudioQueueChanged;
         _audioPlayerService.PlaybackErrorOccurred += OnAudioPlaybackErrorOccurred;
+        _audioPlayerService.CurrentTrackPlaybackInfoChanged += OnCurrentTrackPlaybackInfoChanged;
+        _dataUsageService.UsageChanged += OnDataUsageChanged;
+        _dataUsageService.DataLimitReached += OnDataUsageLimitReached;
         _audioPlayerService.FallbackSimilarTracksProvider = BuildOfflineSimilarTracksFallback;
         RepeatMode = _audioPlayerService.RepeatMode;
         IsShuffleEnabled = _audioPlayerService.IsShuffleEnabled;
@@ -2485,13 +2553,22 @@ public sealed partial class ShellViewModel : ObservableObject
             IsDynamicCoverAccentEnabled = _themeService.IsDynamicCoverAccentEnabled;
             ActiveAccentColorHex = _themeService.ActiveAccentHex;
             IsLightMode = !_themeService.CurrentTheme.IsDark;
+            ThemePreference = _themeService.ThemePreference;
             VolumePercent = Math.Round(_audioPlayerService.Volume * 100.0, 0);
 
             _isHydratingPlayerUiSettings = true;
             try
             {
                 var playerUiSettings = await _storageService.LoadPlayerUiSettingsAsync();
+                _persistedPlayerUiSettings = playerUiSettings;
                 ShowFullscreenSeekButtons = playerUiSettings.ShowFullscreenSeekButtons;
+
+                if (playerUiSettings.IsGpuVisualizerEnabled &&
+                    !string.IsNullOrWhiteSpace(playerUiSettings.SelectedVisualizerId) &&
+                    !string.Equals(playerUiSettings.SelectedVisualizerId, "BackdropOnly", StringComparison.OrdinalIgnoreCase))
+                {
+                    await EnsureVisualizersInitializedAsync();
+                }
             }
             finally
             {
@@ -2499,6 +2576,7 @@ public sealed partial class ShellViewModel : ObservableObject
             }
 
             await HydrateUpdateSettingsAsync();
+            await HydratePlaybackAndDataSettingsAsync();
 
             AvailableThemes.Clear();
             foreach (var theme in _themeService.AvailableThemes)
@@ -2520,40 +2598,103 @@ public sealed partial class ShellViewModel : ObservableObject
             RepeatMode = _audioPlayerService.RepeatMode;
             IsShuffleEnabled = _audioPlayerService.IsShuffleEnabled;
 
-            // Lightweight initial track selection (zero Library/Liked/Playlists UI collection hydration at startup)
-            var initialTracks = _catalogService.GetRecentlyPlayedAlbumsSnapshot()
-                .Select(a => a.SeedTrack)
-                .Where(t => t is not null && !string.IsNullOrWhiteSpace(t.Title))
-                .Take(31)
-                .Select(t => _catalogService.FindLocalOfflineEquivalent(t!) ?? t!)
-                .ToList();
-
-            if (initialTracks.Count == 0)
+            bool restoredSession = false;
+            try
             {
-                var likedSeed = await _catalogService.GetLikedSongsAsync();
-                if (likedSeed.Count > 0)
+                var savedSession = await _storageService.LoadAsync<PersistedPlaybackSessionState>(
+                    PersistedPlaybackSessionState.StorageKey);
+
+                if (savedSession is { QueueItems.Count: > 0 })
                 {
-                    initialTracks = likedSeed
-                        .Take(31)
-                        .Select(t => _catalogService.FindLocalOfflineEquivalent(t) ?? t)
-                        .ToList();
+                    var validQueue = new List<TrackItem>(savedSession.QueueItems.Count);
+                    int adjustedIndex = -1;
+                    for (int i = 0; i < savedSession.QueueItems.Count; i++)
+                    {
+                        var item = savedSession.QueueItems[i];
+                        if (!IsRestorableSessionTrack(item))
+                        {
+                            continue;
+                        }
+
+                        var resolved = _catalogService.FindLocalOfflineEquivalent(item!) ?? item!;
+                        if (i == savedSession.CurrentIndex)
+                        {
+                            adjustedIndex = validQueue.Count;
+                        }
+                        else if (adjustedIndex < 0 && i > savedSession.CurrentIndex)
+                        {
+                            adjustedIndex = validQueue.Count;
+                        }
+
+                        validQueue.Add(resolved);
+                    }
+
+                    if (validQueue.Count > 0)
+                    {
+                        var validCanonical = (savedSession.CanonicalOrder ?? [])
+                            .Where(IsRestorableSessionTrack)
+                            .Select(t => _catalogService.FindLocalOfflineEquivalent(t!) ?? t!)
+                            .ToList();
+
+                        var sanitizedSession = savedSession with
+                        {
+                            QueueItems = validQueue,
+                            CanonicalOrder = validCanonical,
+                            CurrentIndex = adjustedIndex >= 0 ? adjustedIndex : 0
+                        };
+
+                        if (_audioPlayerService.RestorePlaybackSession(sanitizedSession))
+                        {
+                            restoredSession = true;
+                            VolumePercent = Math.Round(_audioPlayerService.Volume * 100.0, 0);
+                            RepeatMode = _audioPlayerService.RepeatMode;
+                            IsShuffleEnabled = _audioPlayerService.IsShuffleEnabled;
+                        }
+                    }
                 }
             }
-
-            if (initialTracks.Count > 0)
+            catch (Exception ex)
             {
-                // Deferred idle queue setup: OnAudioTrackChanged handles cover accent + aurora palette ONCE
-                // without spinning up decoders, canvas, video, or lyrics until playback/lyrics/fullscreen is opened.
-                await _audioPlayerService.SetQueueAsync(initialTracks, startIndex: 0, autoPlay: false);
+                _logger.LogDebug(ex, "Could not restore prior playback session; falling back to default seed.");
             }
-            else
+
+            if (!restoredSession)
             {
-                if (IsDynamicCoverAccentEnabled)
+                // Lightweight initial track selection (zero Library/Liked/Playlists UI collection hydration at startup)
+                var initialTracks = _catalogService.GetRecentlyPlayedAlbumsSnapshot()
+                    .Select(a => a.SeedTrack)
+                    .Where(t => t is not null && !string.IsNullOrWhiteSpace(t.Title))
+                    .Take(31)
+                    .Select(t => _catalogService.FindLocalOfflineEquivalent(t!) ?? t!)
+                    .ToList();
+
+                if (initialTracks.Count == 0)
                 {
-                    await _themeService.ApplyAlbumCoverAccentAsync(CurrentTrack.SafeCoverArtUri);
+                    var likedSeed = await _catalogService.GetLikedSongsAsync();
+                    if (likedSeed.Count > 0)
+                    {
+                        initialTracks = likedSeed
+                            .Take(31)
+                            .Select(t => _catalogService.FindLocalOfflineEquivalent(t) ?? t)
+                            .ToList();
+                    }
                 }
 
-                _ = TriggerAuroraPaletteExtractionAsync(null);
+                if (initialTracks.Count > 0)
+                {
+                    // Deferred idle queue setup: OnAudioTrackChanged handles cover accent + aurora palette ONCE
+                    // without spinning up decoders, canvas, video, or lyrics until playback/lyrics/fullscreen is opened.
+                    await _audioPlayerService.SetQueueAsync(initialTracks, startIndex: 0, autoPlay: false);
+                }
+                else
+                {
+                    if (IsDynamicCoverAccentEnabled)
+                    {
+                        await _themeService.ApplyAlbumCoverAccentAsync(CurrentTrack.SafeCoverArtUri);
+                    }
+
+                    _ = TriggerAuroraPaletteExtractionAsync(null);
+                }
             }
 
             // Load personalized Home discovery feed in parallel and signal Splash Screen when ready
@@ -3064,13 +3205,13 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
-        await OpenArtistByNameAsync(artist.Name, artist.AvatarUri);
+        await OpenArtistByNameAsync(artist.Name, artist.AvatarUri, artist.ExtractChannelBrowseId());
     }
 
     /// <summary>
     /// Opens the dedicated Artist Detail screen by artist name (e.g., clicking the artist name in Now Playing or Album Detail).
     /// </summary>
-    public async Task OpenArtistByNameAsync(string? artistName, string? existingAvatarUri = null)
+    public async Task OpenArtistByNameAsync(string? artistName, string? existingAvatarUri = null, string? explicitBrowseId = null)
     {
         if (string.IsNullOrWhiteSpace(artistName))
         {
@@ -3152,7 +3293,7 @@ public sealed partial class ShellViewModel : ObservableObject
             var appleAssetsTask = Task.Run(
                 () => _canvasArtworkService.GetArtistAssetsAsync(primaryArtist, loadToken),
                 loadToken);
-            var catalogTask = _catalogService.GetArtistDetailAsync(primaryArtist, existingAvatarUri, loadToken);
+            var catalogTask = _catalogService.GetArtistDetailAsync(primaryArtist, existingAvatarUri, loadToken, explicitBrowseId);
 
             // Push Apple Music wordmark & progressive video the instant Apple Music resolves (~150-300ms), without waiting for YTM!
             _ = appleAssetsTask.ContinueWith(t =>
@@ -3439,8 +3580,7 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
-        var shuffled = ArtistTopTracks.OrderBy(_ => Random.Shared.Next()).ToList();
-        await PlayTrackFromListAsync(shuffled[0], shuffled);
+        await SetShuffledQueueAndPlayAsync(ArtistTopTracks.ToList());
     }
 
     /// <summary>
@@ -3672,8 +3812,7 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
-        var shuffled = AlbumDetailTracks.OrderBy(_ => Random.Shared.Next()).ToList();
-        await PlayTrackFromListAsync(shuffled[0], shuffled);
+        await SetShuffledQueueAndPlayAsync(AlbumDetailTracks.ToList());
     }
 
     private void ApplyOptimisticTrackSelection(TrackItem track)
@@ -3777,6 +3916,46 @@ public sealed partial class ShellViewModel : ObservableObject
         finally
         {
             if (autoPlay && loadGen == _trackLoadGeneration)
+            {
+                IsTrackLoading = false;
+            }
+        }
+    }
+
+    private async Task SetShuffledQueueAndPlayAsync(IReadOnlyList<TrackItem> canonicalTracks)
+    {
+        if (canonicalTracks is null || canonicalTracks.Count == 0)
+        {
+            return;
+        }
+
+        var orderedList = new List<TrackItem>(canonicalTracks.Count);
+        foreach (var item in canonicalTracks)
+        {
+            if (item is not null)
+            {
+                orderedList.Add(_catalogService.FindLocalOfflineEquivalent(item) ?? item);
+            }
+        }
+
+        if (orderedList.Count == 0)
+        {
+            return;
+        }
+
+        _hasUserInitiatedPlayback = true;
+        IsShuffleEnabled = true;
+
+        int loadGen = ++_trackLoadGeneration;
+        IsTrackLoading = true;
+        try
+        {
+            await _audioPlayerService.SetShuffledQueueAsync(orderedList, startCanonicalIndex: null, autoPlay: true);
+            TriggerPlaybackSessionPersist(forceImmediate: true);
+        }
+        finally
+        {
+            if (loadGen == _trackLoadGeneration)
             {
                 IsTrackLoading = false;
             }
@@ -4168,8 +4347,7 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
-        var shuffled = LikedSongs.OrderBy(_ => Random.Shared.Next()).ToList();
-        await PlayTrackFromListAsync(shuffled[0], shuffled);
+        await SetShuffledQueueAndPlayAsync(LikedSongs.ToList());
     }
 
     /// <summary>
@@ -4565,6 +4743,7 @@ public sealed partial class ShellViewModel : ObservableObject
     {
         RepeatMode = _audioPlayerService.CycleRepeatMode();
         StatusMessage = RepeatModeTooltip;
+        TriggerPlaybackSessionPersist(forceImmediate: true);
     }
 
     [RelayCommand]
@@ -4572,6 +4751,7 @@ public sealed partial class ShellViewModel : ObservableObject
     {
         IsShuffleEnabled = _audioPlayerService.ToggleShuffle();
         StatusMessage = IsShuffleEnabled ? "Shuffle: Enabled" : "Shuffle: Off";
+        TriggerPlaybackSessionPersist(forceImmediate: true);
     }
 
     [RelayCommand]
@@ -5380,7 +5560,14 @@ public sealed partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private void ToggleNowPlayingSidebar()
     {
+        if (IsMediumOrCompactLayout)
+        {
+            IsNarrowNowPlayingOverlayOpen = !IsNarrowNowPlayingOverlayOpen;
+            return;
+        }
+
         IsNowPlayingSidebarVisible = !IsNowPlayingSidebarVisible;
+        _userPreferredSidebarVisible = IsNowPlayingSidebarVisible;
         NowPlayingSidebarVisibilityChanged?.Invoke(this, IsNowPlayingSidebarVisible);
     }
 
@@ -5901,6 +6088,7 @@ public sealed partial class ShellViewModel : ObservableObject
     private void ContextMenuMoreInfo()
     {
         IsTrackContextMenuOpen = false;
+        PopulateActiveSongInfoForTrack(ContextMenuTrack ?? CurrentTrack);
         OnPropertyChanged(nameof(ContextMenuTrackSourceDetail));
         IsTrackInfoModalOpen = true;
     }
@@ -6023,6 +6211,7 @@ public sealed partial class ShellViewModel : ObservableObject
         SelectedVisualizer = preset;
         IsVisualizerSelectorOpen = false;
         StatusMessage = $"Visualizer: {preset.Name}";
+        _ = PersistVisualizerSelectionAsync(preset);
     }
 
     [RelayCommand]
@@ -6043,6 +6232,7 @@ public sealed partial class ShellViewModel : ObservableObject
         int nextIdx = (idx + 1) % list.Count;
         SelectedVisualizer = list[nextIdx];
         StatusMessage = $"Visualizer: {SelectedVisualizer.Name}";
+        _ = PersistVisualizerSelectionAsync(SelectedVisualizer);
     }
 
     /// <summary>
@@ -6116,11 +6306,37 @@ public sealed partial class ShellViewModel : ObservableObject
             SelectedVisualizer = normalized;
             IsVisualizerSelectorOpen = false;
             StatusMessage = $"Imported custom visualizer: {normalized.Name}";
+            _ = PersistVisualizerSelectionAsync(normalized);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to import custom GPU visualizer JSON.");
             StatusMessage = "Failed to import custom visualizer file.";
+        }
+    }
+
+    private async Task PersistVisualizerSelectionAsync(VisualizerDefinition? preset)
+    {
+        if (preset is null || _isHydratingPlayerUiSettings)
+        {
+            return;
+        }
+
+        try
+        {
+            bool isEnabled = preset.RenderMode != VisualizerRenderMode.None;
+            string? lastActiveId = isEnabled
+                ? preset.Id
+                : _persistedPlayerUiSettings.LastActiveVisualizerId;
+
+            _persistedPlayerUiSettings = await _storageService.SetVisualizerPreferencesAsync(
+                isEnabled,
+                preset.Id,
+                lastActiveId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to persist visualizer preference.");
         }
     }
 
@@ -6130,6 +6346,21 @@ public sealed partial class ShellViewModel : ObservableObject
 
         var builtIns = new List<VisualizerDefinition>
         {
+            new()
+            {
+                Id = "BackdropOnly",
+                Name = "Cover Backdrop Only (Off)",
+                Author = "Xperience Studio",
+                Description = "Displays only the atmospheric album cover backdrop without 3D spectrum geometry.",
+                RenderMode = VisualizerRenderMode.None,
+                UseDynamicCoverAccent = true,
+                Sensitivity = 1.0,
+                Speed = 1.0,
+                GridResolution = 32,
+                WaveLayers = 4,
+                ParticleCount = 0,
+                BackgroundDimOpacity = 0.55
+            },
             new()
             {
                 Id = "NeonTerrainPeaks",
@@ -6209,21 +6440,6 @@ public sealed partial class ShellViewModel : ObservableObject
                 TrebleDeformation = 1.35,
                 BloomRadius = 14.0,
                 BackgroundDimOpacity = 0.74
-            },
-            new()
-            {
-                Id = "BackdropOnly",
-                Name = "Cover Backdrop Only (Off)",
-                Author = "Xperience Studio",
-                Description = "Displays only the atmospheric album cover backdrop without 3D spectrum geometry.",
-                RenderMode = VisualizerRenderMode.None,
-                UseDynamicCoverAccent = true,
-                Sensitivity = 1.0,
-                Speed = 1.0,
-                GridResolution = 32,
-                WaveLayers = 4,
-                ParticleCount = 0,
-                BackgroundDimOpacity = 0.55
             }
         };
 
@@ -6257,8 +6473,16 @@ public sealed partial class ShellViewModel : ObservableObject
         }
 
         var currentId = SelectedVisualizer?.Id;
+        string desiredId = !string.IsNullOrWhiteSpace(currentId) &&
+                           !string.Equals(currentId, "BackdropOnly", StringComparison.OrdinalIgnoreCase)
+            ? currentId!
+            : (_persistedPlayerUiSettings.IsGpuVisualizerEnabled &&
+               !string.IsNullOrWhiteSpace(_persistedPlayerUiSettings.SelectedVisualizerId)
+                ? _persistedPlayerUiSettings.SelectedVisualizerId
+                : "BackdropOnly");
+
         SelectedVisualizer = AvailableVisualizers.FirstOrDefault(v =>
-            string.Equals(v.Id, currentId, StringComparison.OrdinalIgnoreCase)) ?? AvailableVisualizers[0];
+            string.Equals(v.Id, desiredId, StringComparison.OrdinalIgnoreCase)) ?? AvailableVisualizers[0];
     }
 
     [RelayCommand]
@@ -6512,7 +6736,7 @@ public sealed partial class ShellViewModel : ObservableObject
                     : (!string.IsNullOrWhiteSpace(item.Title) ? item.Title.Trim() : null);
                 if (!string.IsNullOrWhiteSpace(artistName))
                 {
-                    await OpenArtistByNameAsync(artistName, item.ArtworkUri);
+                    await OpenArtistByNameAsync(artistName, item.ArtworkUri, item.BrowseId);
                 }
 
                 break;
@@ -6604,7 +6828,7 @@ public sealed partial class ShellViewModel : ObservableObject
                     if (stationBrowseId.StartsWith("UC", StringComparison.Ordinal))
                     {
                         string targetArtist = !string.IsNullOrWhiteSpace(item.ArtistName) ? item.ArtistName.Trim() : item.Title;
-                        await OpenArtistByNameAsync(targetArtist, item.ArtworkUri);
+                        await OpenArtistByNameAsync(targetArtist, item.ArtworkUri, stationBrowseId);
                     }
                     else
                     {
@@ -7637,8 +7861,7 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
-        var shuffled = PlaylistDetailTracks.OrderBy(_ => Random.Shared.Next()).ToList();
-        await PlayTrackFromListAsync(shuffled[0], shuffled);
+        await SetShuffledQueueAndPlayAsync(PlaylistDetailTracks.ToList());
     }
 
     [RelayCommand]
@@ -7703,6 +7926,21 @@ public sealed partial class ShellViewModel : ObservableObject
     {
         await _themeService.ApplyThemeAsync(themeId);
         IsLightMode = !_themeService.CurrentTheme.IsDark;
+        ThemePreference = _themeService.ThemePreference;
+        SyncGlassSlidersFromService(_themeService.LiquidGlass);
+    }
+
+    [RelayCommand]
+    private async Task SetThemePreferenceAsync(string preferenceName)
+    {
+        if (!Enum.TryParse<AppThemePreference>(preferenceName, ignoreCase: true, out var preference))
+        {
+            return;
+        }
+
+        await _themeService.SetThemePreferenceAsync(preference);
+        IsLightMode = !_themeService.CurrentTheme.IsDark;
+        ThemePreference = _themeService.ThemePreference;
         SyncGlassSlidersFromService(_themeService.LiquidGlass);
     }
 
@@ -8050,7 +8288,18 @@ public sealed partial class ShellViewModel : ObservableObject
             return;
         }
 
-        SeekToSeconds(lyricLine.Timestamp.TotalSeconds);
+        double targetSeconds = lyricLine.Timestamp.TotalSeconds;
+        if (IsFullscreenVideoMode && _currentOfficialVideoMetadata is not null)
+        {
+            var videoDuration = TotalDurationSeconds > 1.0
+                ? TimeSpan.FromSeconds(TotalDurationSeconds)
+                : (TimeSpan?)null;
+            targetSeconds = _currentOfficialVideoMetadata
+                .MapSongToVideoPosition(lyricLine.Timestamp, videoDuration)
+                .TotalSeconds;
+        }
+
+        SeekToSeconds(targetSeconds);
     }
 
     /// <summary>
@@ -8118,6 +8367,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
         double clampedPosSec = Math.Clamp(position.TotalSeconds, 0.0, effectiveDurationSec);
         CurrentPositionSeconds = clampedPosSec;
+        LyricsPositionSeconds = ComputeEffectiveLyricsPositionSeconds(clampedPosSec);
 
         int posSecond = Math.Max(0, (int)clampedPosSec);
         if (posSecond != _lastFormattedPositionSecond)
@@ -8372,6 +8622,7 @@ public sealed partial class ShellViewModel : ObservableObject
             {
                 HomeRelatedArtists.Add(artist);
             }
+            OnPropertyChanged(nameof(HasHomeRelatedArtistsVisibility));
 
             HomeRecommendedAlbums.Clear();
             foreach (var album in feed.RecommendedAlbums)
@@ -8466,7 +8717,10 @@ public sealed partial class ShellViewModel : ObservableObject
         }
         finally
         {
+            IsHomeFeedInitialLoading = false;
             IsLoadingDiscovery = false;
+            OnPropertyChanged(nameof(IsHomeSkeletonActive));
+            OnPropertyChanged(nameof(HomeSkeletonVisibility));
         }
     }
 
@@ -8659,11 +8913,28 @@ public sealed partial class ShellViewModel : ObservableObject
 
     private int _activeLyricIndex = -1;
 
+    private double ComputeEffectiveLyricsPositionSeconds(double audioPositionSeconds)
+    {
+        if (IsFullscreenVideoMode && _currentOfficialVideoMetadata is not null)
+        {
+            return _currentOfficialVideoMetadata
+                .MapVideoToSongPosition(TimeSpan.FromSeconds(Math.Max(0.0, audioPositionSeconds)), CurrentTrack?.Duration)
+                .TotalSeconds;
+        }
+
+        return Math.Max(0.0, audioPositionSeconds);
+    }
+
     private void UpdateActiveLyricForPosition(TimeSpan position, bool forceNotify)
     {
         if (CurrentLyrics.Count == 0)
         {
             return;
+        }
+
+        if (IsFullscreenVideoMode && _currentOfficialVideoMetadata is not null)
+        {
+            position = _currentOfficialVideoMetadata.MapVideoToSongPosition(position, CurrentTrack?.Duration);
         }
 
         // Look ahead by 100ms so the visual spring transition lands right on the vocal beat
@@ -8728,6 +8999,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
                 // Cancel and dispose any in-flight secondary work from the previous track immediately
                 var secondaryToken = ReplaceCts(ref _trackChangeSecondaryCts).Token;
+                _ = TrackRemoteArtworkDataUsageAsync(track, secondaryToken);
 
                 // 1. Immediate (<16ms) UI metadata, cover art, liked state, and playing-row updates — ZERO blocking awaits!
                 bool isLiked = track.IsLiked || (_isLikedHydrated && LikedSongs.Any(l =>
@@ -8762,6 +9034,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
                 int posSecond = Math.Max(0, (int)effectivePosition.TotalSeconds);
                 CurrentPositionSeconds = effectivePosition.TotalSeconds;
+                LyricsPositionSeconds = ComputeEffectiveLyricsPositionSeconds(effectivePosition.TotalSeconds);
                 _lastFormattedPositionSecond = posSecond;
                 FormattedPosition = $"{posSecond / 60}:{posSecond % 60:D2}";
 
@@ -8803,10 +9076,11 @@ public sealed partial class ShellViewModel : ObservableObject
                 }
 
                 RecordTrackPlayedAndUpdateHomeRecent(track, secondaryToken);
+                TriggerPlaybackSessionPersist(forceImmediate: true);
 
                 // 2. Launch secondary work IN PARALLEL so Canvas, Cover Accent, Aurora, Video, and Lyrics NEVER block each other!
                 _ = TriggerCanvasLookupForTrackAsync(track);
-                _ = TriggerMusicVideoLookupForTrackAsync(track);
+                _ = CheckOfficialMusicVideoAvailabilityAsync(track);
                 if (!wasDeferredSameTrack)
                 {
                     _ = TriggerAuroraPaletteExtractionAsync(track.SafeCoverArtUri);
@@ -8917,6 +9191,7 @@ public sealed partial class ShellViewModel : ObservableObject
         _dispatcherQueue.TryEnqueue(() =>
         {
             IsLightMode = !theme.IsDark;
+            ThemePreference = _themeService.ThemePreference;
             ActiveAccentColorHex = _themeService.ActiveAccentHex;
             foreach (var sec in MoodGenreSections)
             {
@@ -8994,6 +9269,10 @@ public sealed partial class ShellViewModel : ObservableObject
                     ScheduleNextTrackLyricsPrefetch();
                 }
             }
+            else if (_hasUserInitiatedPlayback)
+            {
+                TriggerPlaybackSessionPersist(forceImmediate: true);
+            }
         });
     }
 
@@ -9013,6 +9292,10 @@ public sealed partial class ShellViewModel : ObservableObject
             }
 
             ApplyPlaybackPositionToUi(e.Position, e.Duration, forceLyricNotify: false);
+            if (IsPlaying || _hasUserInitiatedPlayback)
+            {
+                TriggerPlaybackSessionPersist(forceImmediate: false);
+            }
         });
     }
 
@@ -9155,8 +9438,63 @@ public sealed partial class ShellViewModel : ObservableObject
             if (_hasUserInitiatedPlayback || IsPlaying)
             {
                 ScheduleNextTrackLyricsPrefetch();
+                TriggerPlaybackSessionPersist(forceImmediate: true);
             }
         });
+    }
+
+    private static bool IsRestorableSessionTrack(TrackItem? item)
+    {
+        if (item is null ||
+            string.IsNullOrWhiteSpace(item.Title) ||
+            string.Equals(item.Id, "empty_state_track", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (item.SourceType == MediaSourceType.Local)
+        {
+            return !string.IsNullOrWhiteSpace(item.AudioSourceUri) && File.Exists(item.AudioSourceUri);
+        }
+
+        return true;
+    }
+
+    private void TriggerPlaybackSessionPersist(bool forceImmediate)
+    {
+        long nowMs = Environment.TickCount64;
+        if (!forceImmediate)
+        {
+            long prev = Volatile.Read(ref _lastPlaybackSessionPersistTickMs);
+            if (nowMs - prev < 15_000)
+            {
+                return;
+            }
+        }
+
+        Volatile.Write(ref _lastPlaybackSessionPersistTickMs, nowMs);
+        _ = PersistPlaybackSessionAsync();
+    }
+
+    /// <summary>
+    /// Saves the active queue, current track, playback position, shuffle/repeat, and volume to disk.
+    /// </summary>
+    public async Task PersistPlaybackSessionAsync()
+    {
+        try
+        {
+            var snapshot = _audioPlayerService.CapturePlaybackSessionSnapshot();
+            if (snapshot is null)
+            {
+                return;
+            }
+
+            await _storageService.SaveAsync(PersistedPlaybackSessionState.StorageKey, snapshot).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to persist playback session state.");
+        }
     }
 
     private void OnLanguageChanged(object? sender, LanguageOption language)

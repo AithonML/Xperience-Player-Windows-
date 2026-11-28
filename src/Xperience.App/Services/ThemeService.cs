@@ -17,6 +17,8 @@ namespace Xperience.App.Services;
 public sealed class ThemeService : IThemeService
 {
     private const string ThemeIdSettingKey = "SelectedThemeId";
+    private const string ThemePreferenceSettingKey = "AppThemePreference_v1";
+    private const string LastDarkThemeIdSettingKey = "LastDarkThemeId_v1";
     private const string CustomThemeSettingKey = "CustomUserTheme";
     private const string LiquidGlassSettingKey = "LiquidGlassShaderParams_v8";
     private const string DynamicAccentEnabledKey = "IsDynamicCoverAccentEnabled";
@@ -25,7 +27,9 @@ public sealed class ThemeService : IThemeService
     private readonly IStorageService _storageService;
     private readonly ILogger<ThemeService> _logger;
     private readonly List<ThemePaletteDefinition> _themes;
+    private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private string _manualAccentHex = "#FF2DD4BF";
+    private string _lastDarkThemeId = "ObsidianLiquidDark";
 
     /// <inheritdoc />
     public event EventHandler<ThemePaletteDefinition>? ThemeChanged;
@@ -38,6 +42,9 @@ public sealed class ThemeService : IThemeService
 
     /// <inheritdoc />
     public ThemePaletteDefinition CurrentTheme { get; private set; }
+
+    /// <inheritdoc />
+    public AppThemePreference ThemePreference { get; private set; } = AppThemePreference.Dark;
 
     /// <inheritdoc />
     public LiquidGlassParameters LiquidGlass { get; private set; }
@@ -173,6 +180,7 @@ public sealed class ThemeService : IThemeService
 
         CurrentTheme = _themes[0];
         LiquidGlass = CurrentTheme.LiquidGlass;
+        _uiSettings.ColorValuesChanged += OnSystemColorValuesChanged;
     }
 
     /// <inheritdoc />
@@ -193,7 +201,34 @@ public sealed class ThemeService : IThemeService
             defaultValue: _themes[0].Id,
             cancellationToken);
 
-        var matched = _themes.FirstOrDefault(t => t.Id == savedThemeId) ?? _themes[0];
+        var savedLastDarkId = await _storageService.LoadAsync<string>(
+            LastDarkThemeIdSettingKey,
+            defaultValue: null,
+            cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(savedLastDarkId) &&
+            _themes.Any(t => string.Equals(t.Id, savedLastDarkId, StringComparison.OrdinalIgnoreCase) && t.IsDark))
+        {
+            _lastDarkThemeId = savedLastDarkId;
+        }
+
+        var matched = _themes.FirstOrDefault(t => string.Equals(t.Id, savedThemeId, StringComparison.OrdinalIgnoreCase)) ?? _themes[0];
+        if (matched.IsDark)
+        {
+            _lastDarkThemeId = matched.Id;
+        }
+
+        var savedPreference = await _storageService.LoadAsync<AppThemePreference?>(
+            ThemePreferenceSettingKey,
+            defaultValue: null,
+            cancellationToken);
+
+        ThemePreference = savedPreference ?? (matched.IsDark ? AppThemePreference.Dark : AppThemePreference.Light);
+        if (ThemePreference == AppThemePreference.System)
+        {
+            matched = ResolveSystemMatchedTheme();
+        }
+
         CurrentTheme = matched;
 
         var savedGlass = await _storageService.LoadAsync<LiquidGlassParameters>(
@@ -235,17 +270,127 @@ public sealed class ThemeService : IThemeService
             return;
         }
 
+        if (target.IsDark)
+        {
+            _lastDarkThemeId = target.Id;
+            await _storageService.SaveAsync(LastDarkThemeIdSettingKey, _lastDarkThemeId, cancellationToken);
+        }
+
+        ThemePreference = target.IsDark ? AppThemePreference.Dark : AppThemePreference.Light;
+        await _storageService.SaveAsync(ThemePreferenceSettingKey, ThemePreference, cancellationToken);
+        await ApplyResolvedPaletteCoreAsync(target, persistThemeId: true, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task SetThemePreferenceAsync(AppThemePreference preference, CancellationToken cancellationToken = default)
+    {
+        ThemePreference = preference;
+        await _storageService.SaveAsync(ThemePreferenceSettingKey, preference, cancellationToken);
+
+        ThemePaletteDefinition target = preference switch
+        {
+            AppThemePreference.System => ResolveSystemMatchedTheme(),
+            AppThemePreference.Light => _themes.FirstOrDefault(t => !t.IsDark) ?? _themes[0],
+            _ => _themes.FirstOrDefault(t => string.Equals(t.Id, _lastDarkThemeId, StringComparison.OrdinalIgnoreCase) && t.IsDark)
+                 ?? _themes.FirstOrDefault(t => t.IsDark)
+                 ?? _themes[0]
+        };
+
+        await ApplyResolvedPaletteCoreAsync(target, persistThemeId: preference != AppThemePreference.System, cancellationToken);
+    }
+
+    private async Task ApplyResolvedPaletteCoreAsync(
+        ThemePaletteDefinition target,
+        bool persistThemeId,
+        CancellationToken cancellationToken)
+    {
         CurrentTheme = target;
         LiquidGlass = target.LiquidGlass;
 
-        ApplyThemeTokensToResources(CurrentTheme);
-        ApplyWindowBackdrop(CurrentTheme.BackdropKind);
+        RunOnUiThread(() =>
+        {
+            ApplyThemeTokensToResources(CurrentTheme);
+            ApplyWindowBackdrop(CurrentTheme.BackdropKind);
+        });
 
-        await _storageService.SaveAsync(ThemeIdSettingKey, CurrentTheme.Id, cancellationToken).ConfigureAwait(false);
-        await _storageService.SaveAsync(LiquidGlassSettingKey, LiquidGlass, cancellationToken).ConfigureAwait(false);
+        if (persistThemeId)
+        {
+            await _storageService.SaveAsync(ThemeIdSettingKey, CurrentTheme.Id, cancellationToken);
+        }
 
-        ThemeChanged?.Invoke(this, CurrentTheme);
-        LiquidGlassParametersChanged?.Invoke(this, LiquidGlass);
+        await _storageService.SaveAsync(LiquidGlassSettingKey, LiquidGlass, cancellationToken);
+
+        RunOnUiThread(() =>
+        {
+            ThemeChanged?.Invoke(this, CurrentTheme);
+            LiquidGlassParametersChanged?.Invoke(this, LiquidGlass);
+        });
+    }
+
+    private static void RunOnUiThread(Action action)
+    {
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher is not null && !dispatcher.HasThreadAccess)
+        {
+            dispatcher.TryEnqueue(() => action());
+            return;
+        }
+
+        action();
+    }
+
+    private ThemePaletteDefinition ResolveSystemMatchedTheme()
+    {
+        bool systemIsDark = IsSystemDarkMode();
+        if (systemIsDark)
+        {
+            return _themes.FirstOrDefault(t => string.Equals(t.Id, _lastDarkThemeId, StringComparison.OrdinalIgnoreCase) && t.IsDark)
+                   ?? _themes.FirstOrDefault(t => t.IsDark)
+                   ?? _themes[0];
+        }
+
+        return _themes.FirstOrDefault(t => !t.IsDark) ?? _themes[0];
+    }
+
+    private bool IsSystemDarkMode()
+    {
+        try
+        {
+            var bg = _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Background);
+            return ((5 * bg.G) + (2 * bg.R) + bg.B) <= (8 * 128);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private void OnSystemColorValuesChanged(Windows.UI.ViewManagement.UISettings sender, object args)
+    {
+        if (ThemePreference != AppThemePreference.System)
+        {
+            return;
+        }
+
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher is null)
+        {
+            return;
+        }
+
+        dispatcher.TryEnqueue(() =>
+        {
+            if (ThemePreference != AppThemePreference.System)
+            {
+                return;
+            }
+
+            var resolved = ResolveSystemMatchedTheme();
+            if (!string.Equals(resolved.Id, CurrentTheme.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                _ = ApplyResolvedPaletteCoreAsync(resolved, persistThemeId: false, CancellationToken.None);
+            }
+        });
     }
 
     /// <inheritdoc />
@@ -263,8 +408,8 @@ public sealed class ThemeService : IThemeService
             _themes.Add(customTheme);
         }
 
-        await _storageService.SaveAsync(CustomThemeSettingKey, customTheme, cancellationToken).ConfigureAwait(false);
-        await ApplyThemeAsync(customTheme.Id, cancellationToken).ConfigureAwait(false);
+        await _storageService.SaveAsync(CustomThemeSettingKey, customTheme, cancellationToken);
+        await ApplyThemeAsync(customTheme.Id, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -274,11 +419,13 @@ public sealed class ThemeService : IThemeService
         var isShaderActive = backdropKind != BackdropMaterialKind.SolidPerformance;
         LiquidGlass = LiquidGlass with { IsShaderEnabled = isShaderActive };
 
-        ApplyWindowBackdrop(backdropKind);
-
-        ThemeChanged?.Invoke(this, CurrentTheme);
-        LiquidGlassParametersChanged?.Invoke(this, LiquidGlass);
-        await _storageService.SaveAsync(LiquidGlassSettingKey, LiquidGlass, cancellationToken).ConfigureAwait(false);
+        RunOnUiThread(() =>
+        {
+            ApplyWindowBackdrop(backdropKind);
+            ThemeChanged?.Invoke(this, CurrentTheme);
+            LiquidGlassParametersChanged?.Invoke(this, LiquidGlass);
+        });
+        await _storageService.SaveAsync(LiquidGlassSettingKey, LiquidGlass, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -286,11 +433,11 @@ public sealed class ThemeService : IThemeService
     {
         ArgumentNullException.ThrowIfNull(parameters);
         LiquidGlass = parameters;
-        LiquidGlassParametersChanged?.Invoke(this, LiquidGlass);
+        RunOnUiThread(() => LiquidGlassParametersChanged?.Invoke(this, LiquidGlass));
 
         if (persist)
         {
-            await _storageService.SaveAsync(LiquidGlassSettingKey, LiquidGlass).ConfigureAwait(false);
+            await _storageService.SaveAsync(LiquidGlassSettingKey, LiquidGlass);
         }
     }
 
@@ -298,17 +445,20 @@ public sealed class ThemeService : IThemeService
     public async Task SetDynamicCoverAccentEnabledAsync(bool isEnabled, string? currentCoverArtUri = null, CancellationToken cancellationToken = default)
     {
         IsDynamicCoverAccentEnabled = isEnabled;
-        await _storageService.SaveAsync(DynamicAccentEnabledKey, isEnabled, cancellationToken).ConfigureAwait(false);
+        await _storageService.SaveAsync(DynamicAccentEnabledKey, isEnabled, cancellationToken);
 
         if (isEnabled)
         {
-            await ApplyAlbumCoverAccentAsync(currentCoverArtUri, cancellationToken).ConfigureAwait(false);
+            await ApplyAlbumCoverAccentAsync(currentCoverArtUri, cancellationToken);
         }
         else
         {
             var manualColor = ColorHelperEx.ParseHex(_manualAccentHex);
-            ApplyAccentColorSuite(manualColor);
-            AccentColorChanged?.Invoke(this, ActiveAccentHex);
+            RunOnUiThread(() =>
+            {
+                ApplyAccentColorSuite(manualColor);
+                AccentColorChanged?.Invoke(this, ActiveAccentHex);
+            });
         }
     }
 
@@ -356,12 +506,12 @@ public sealed class ThemeService : IThemeService
         IsDynamicCoverAccentEnabled = false;
 
         var parsed = ColorHelperEx.ParseHex(accentHex);
-        ApplyAccentColorSuite(parsed);
+        RunOnUiThread(() => ApplyAccentColorSuite(parsed));
 
-        await _storageService.SaveAsync(ManualAccentHexKey, _manualAccentHex, cancellationToken).ConfigureAwait(false);
-        await _storageService.SaveAsync(DynamicAccentEnabledKey, false, cancellationToken).ConfigureAwait(false);
+        await _storageService.SaveAsync(ManualAccentHexKey, _manualAccentHex, cancellationToken);
+        await _storageService.SaveAsync(DynamicAccentEnabledKey, false, cancellationToken);
 
-        AccentColorChanged?.Invoke(this, ActiveAccentHex);
+        RunOnUiThread(() => AccentColorChanged?.Invoke(this, ActiveAccentHex));
     }
 
     /// <summary>

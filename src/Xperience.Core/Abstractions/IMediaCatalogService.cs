@@ -79,7 +79,8 @@ public interface IMediaCatalogService
     Task<ArtistDetailProfile> GetArtistDetailAsync(
         string artistName,
         string? existingAvatarUri = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? explicitBrowseId = null);
 
     /// <summary>
     /// Resolves the complete Album Detail profile including metadata information, ordered album tracks,
@@ -186,6 +187,26 @@ public interface IMediaCatalogService
     /// <param name="cancellationToken">Cancellation token.</param>
     Task RemoveLocalMusicDirectoryAsync(
         string folderPath,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the active local scan Blacklist/Whitelist and shallow/deep filter configuration.
+    /// </summary>
+    LocalScanFilterSettings GetLocalScanFilterSettings();
+
+    /// <summary>
+    /// Updates and persists the local scan Blacklist/Whitelist and shallow/deep filter configuration,
+    /// and resynchronizes the local library catalog accordingly.
+    /// </summary>
+    Task UpdateLocalScanFilterSettingsAsync(
+        LocalScanFilterSettings settings,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Rescans all configured local directories honoring the active Blacklist/Whitelist and depth rules.
+    /// </summary>
+    Task RescanLocalLibraryAsync(
+        IProgress<int>? progress = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -26,9 +26,10 @@ namespace Xperience.App.Services.Audio;
 public sealed class NightcoreDspEngine : IDisposable
 {
     private const int DefaultSampleRate = 48000;
-    private const int RingBufferCapacityFrames = 120_000; // 2.5 seconds at 48 kHz
-    private const int DecoderRefillThresholdFrames = 48_000; // Keep >= 1.0s decoded ahead
-    private const int DecoderReadChunkFrames = 4096;
+    private const int RingBufferCapacityFrames = 288_000; // 6.0 seconds at 48 kHz (1.5s at 192 kHz)
+    private const int DecoderRefillThresholdFrames = 144_000; // Keep >= 3.0s decoded ahead at 48 kHz
+    private const int DecoderReadChunkFrames = 8192;
+    private const int TargetQueuedQuanta = 6; // Maintain ~60ms lookahead in AudioFrameInputNode
     private const int FilterUpdateBlockFrames = 64; // Recompute biquad coefficients every 64 frames (~1.33ms) during ramps
     private const double Ln100 = 4.605170185988091; // ln(100): reaches 99% of target in RampDurationSeconds (150ms)
 
@@ -66,6 +67,9 @@ public sealed class NightcoreDspEngine : IDisposable
     private int _outputSampleRate = DefaultSampleRate;
     private TimeSpan _trackDuration = TimeSpan.Zero;
     private double _sourcePositionFrames;
+    private double _lastSeekFloorSeconds;
+    private float _lastRenderedLeft;
+    private float _lastRenderedRight;
     private long _trackGeneration;
     private long _seekGeneration;
 
@@ -198,7 +202,19 @@ public sealed class NightcoreDspEngine : IDisposable
 
             int sr = Math.Max(8000, Volatile.Read(ref _decoderSampleRate));
             double frames = Volatile.Read(ref _sourcePositionFrames);
-            var pos = TimeSpan.FromSeconds(Math.Max(0.0, frames / sr));
+            double rawSourceSeconds = Math.Max(0.0, frames / sr);
+            double audibleSeconds = rawSourceSeconds;
+            if (_isGraphPlaying)
+            {
+                double outSr = Math.Max(8000, Volatile.Read(ref _outputSampleRate));
+                ulong queuedOut = _frameInputNode?.QueuedSampleCount ?? 0UL;
+                int graphLatency = Math.Max(0, _audioGraph?.LatencyInSamples ?? 0);
+                double bufferedSourceSeconds = ((queuedOut + (ulong)graphLatency) / outSr) * Math.Clamp(CurrentPlaybackRate, 0.5, 2.0);
+                double floor = Volatile.Read(ref _lastSeekFloorSeconds);
+                audibleSeconds = Math.Max(floor, rawSourceSeconds - bufferedSourceSeconds);
+            }
+
+            var pos = TimeSpan.FromSeconds(Math.Max(0.0, audibleSeconds));
             var dur = _trackDuration;
             return dur > TimeSpan.Zero && pos > dur ? dur : pos;
         }
@@ -472,7 +488,7 @@ public sealed class NightcoreDspEngine : IDisposable
                 : requestedSeek;
             if (decoder.Seek(clampedSeek))
             {
-                startPosition = clampedSeek;
+                startPosition = decoder.LastSeekActualPosition;
             }
             else
             {
@@ -484,8 +500,8 @@ public sealed class NightcoreDspEngine : IDisposable
             }
         }
 
-        // Pre-decode an initial ~250ms priming window so frame 0 plays instantaneously with zero underrun
-        int primeFrameCount = Math.Min(12000, RingBufferCapacityFrames / 4);
+        // Pre-decode an initial ~340ms priming window so frame 0 plays instantaneously with zero underrun
+        int primeFrameCount = Math.Min(16384, RingBufferCapacityFrames / 4);
         var primeFrames = ArrayPool<float>.Shared.Rent(primeFrameCount * 2);
         int primedFrames;
         bool primeEof;
@@ -514,7 +530,10 @@ public sealed class NightcoreDspEngine : IDisposable
         {
             _decoderSampleRate = Math.Max(8000, decoder.SampleRate);
             _trackDuration = decoder.Duration;
+            _lastSeekFloorSeconds = startPosition.TotalSeconds;
             _sourcePositionFrames = startPosition.TotalSeconds * _decoderSampleRate;
+            _lastRenderedLeft = 0f;
+            _lastRenderedRight = 0f;
             _trackCompletedFired = false;
             FlushDspBuffersLocked();
         }
@@ -554,12 +573,17 @@ public sealed class NightcoreDspEngine : IDisposable
             {
                 try
                 {
-                    // Pre-queue 2 quanta (~20ms) BEFORE enabling QuantumStarted/Start for serialized, click-free start
+                    // Pre-queue TargetQueuedQuanta (~60ms) BEFORE enabling QuantumStarted/Start for glitch-free WASAPI playback
                     int quantumFrames = Math.Clamp(_audioGraph.SamplesPerQuantum, 256, 2048);
-                    if (_frameInputNode.QueuedSampleCount < (ulong)(quantumFrames * 2))
+                    ulong targetSamples = (ulong)(quantumFrames * TargetQueuedQuanta);
+                    int prefillGuard = 0;
+                    while (_frameInputNode.QueuedSampleCount < targetSamples && prefillGuard++ < TargetQueuedQuanta)
                     {
                         EnqueueProcessedAudioFrameLocked(_frameInputNode, quantumFrames);
-                        EnqueueProcessedAudioFrameLocked(_frameInputNode, quantumFrames);
+                        if (_decoderReachedEof && Volatile.Read(ref _ringAvailableFrames) <= 0)
+                        {
+                            break;
+                        }
                     }
 
                     _isGraphPlaying = true;
@@ -676,10 +700,11 @@ public sealed class NightcoreDspEngine : IDisposable
                     return false;
                 }
 
-                const int primeFramesCount = 8192;
+                const int primeFramesCount = 16384;
                 var primeBuf = ArrayPool<float>.Shared.Rent(primeFramesCount * 2);
                 int primed;
                 bool primeEof;
+                TimeSpan actualSeekPos = decoder.LastSeekActualPosition;
                 try
                 {
                     primed = decoder.ReadStereoFrames(primeBuf, 0, primeFramesCount, out primeEof);
@@ -700,7 +725,7 @@ public sealed class NightcoreDspEngine : IDisposable
                             {
                                 primed = retryPrimed;
                                 primeEof = retryEof;
-                                clamped = retryPos;
+                                actualSeekPos = decoder.LastSeekActualPosition;
                             }
                         }
                     }
@@ -731,7 +756,10 @@ public sealed class NightcoreDspEngine : IDisposable
 
                 lock (_dspLock)
                 {
-                    _sourcePositionFrames = clamped.TotalSeconds * Math.Max(8000, _decoderSampleRate);
+                    _lastSeekFloorSeconds = actualSeekPos.TotalSeconds;
+                    _sourcePositionFrames = actualSeekPos.TotalSeconds * Math.Max(8000, _decoderSampleRate);
+                    _lastRenderedLeft = 0f;
+                    _lastRenderedRight = 0f;
                     _trackCompletedFired = false;
                     FlushDspBuffersLocked();
                 }
@@ -1045,12 +1073,6 @@ public sealed class NightcoreDspEngine : IDisposable
             return;
         }
 
-        int requiredFrames = args.RequiredSamples;
-        if (requiredFrames <= 0)
-        {
-            return;
-        }
-
         lock (_frameEnqueueLock)
         {
             if (Volatile.Read(ref _disposed) != 0 || !_isGraphPlaying || _isSeeking || !_isUsingAudioGraphForCurrentTrack)
@@ -1060,7 +1082,29 @@ public sealed class NightcoreDspEngine : IDisposable
 
             try
             {
-                EnqueueProcessedAudioFrameLocked(sender, requiredFrames);
+                int quantumFrames = Math.Clamp(_audioGraph?.SamplesPerQuantum ?? 480, 256, 2048);
+                int targetBuffered = quantumFrames * TargetQueuedQuanta;
+                int currentlyQueued = (int)Math.Min(int.MaxValue, sender.QueuedSampleCount);
+                int requiredFrames = args.RequiredSamples;
+
+                if (requiredFrames > 0)
+                {
+                    EnqueueProcessedAudioFrameLocked(sender, requiredFrames);
+                    currentlyQueued += requiredFrames;
+                }
+
+                // Top up the lookahead cushion even when RequiredSamples == 0 so GC pauses or UI bursts never underrun WASAPI
+                int topUpPasses = 0;
+                while (currentlyQueued < targetBuffered && topUpPasses++ < 2)
+                {
+                    if (_decoderReachedEof && Volatile.Read(ref _ringAvailableFrames) <= 0)
+                    {
+                        break;
+                    }
+
+                    EnqueueProcessedAudioFrameLocked(sender, quantumFrames);
+                    currentlyQueued += quantumFrames;
+                }
             }
             catch (Exception ex)
             {
@@ -1246,9 +1290,12 @@ public sealed class NightcoreDspEngine : IDisposable
                     break;
                 }
 
-                // Buffer momentarily dry while decoder wakes up — output silence without corrupting phase
-                outputStereo[writtenFrames * 2] = 0f;
-                outputStereo[(writtenFrames * 2) + 1] = 0f;
+                // Buffer momentarily dry while decoder wakes up — smooth exponential decay avoids clicks/pops
+                _decoderWakeSignal.Set();
+                _lastRenderedLeft *= 0.96f;
+                _lastRenderedRight *= 0.96f;
+                outputStereo[writtenFrames * 2] = _lastRenderedLeft;
+                outputStereo[(writtenFrames * 2) + 1] = _lastRenderedRight;
                 writtenFrames++;
                 continue;
             }
@@ -1258,19 +1305,24 @@ public sealed class NightcoreDspEngine : IDisposable
             int i2 = Math.Min(_resampleWindowFrames - 1, i1 + 1);
             int i3 = Math.Min(_resampleWindowFrames - 1, i1 + 2);
 
-            outputStereo[writtenFrames * 2] = HermiteInterpolate(
+            float outL = HermiteInterpolate(
                 resampleWindow[i0 * 2],
                 resampleWindow[i1 * 2],
                 resampleWindow[i2 * 2],
                 resampleWindow[i3 * 2],
                 frac);
 
-            outputStereo[(writtenFrames * 2) + 1] = HermiteInterpolate(
+            float outR = HermiteInterpolate(
                 resampleWindow[(i0 * 2) + 1],
                 resampleWindow[(i1 * 2) + 1],
                 resampleWindow[(i2 * 2) + 1],
                 resampleWindow[(i3 * 2) + 1],
                 frac);
+
+            _lastRenderedLeft = outL;
+            _lastRenderedRight = outR;
+            outputStereo[writtenFrames * 2] = outL;
+            outputStereo[(writtenFrames * 2) + 1] = outR;
 
             _resampleReadPos += resampleStep;
             _sourcePositionFrames += Math.Clamp(_currentPlaybackRate, 0.50, 2.00) * sourceRateRatio;

@@ -25,7 +25,9 @@ public sealed class StorageService : IStorageService, IDisposable
         "LikedOnlineTracks_v1",
         "UserPlaylists_v1",
         "PlaybackHistoryLog_v1",
-        "TrackAddedAt_v1"
+        "TrackAddedAt_v1",
+        "DataUsageHistory_v1",
+        "PlaybackSessionState_v1"
     };
 
     private readonly ILogger<StorageService> _logger;
@@ -226,6 +228,59 @@ public sealed class StorageService : IStorageService, IDisposable
         {
             _logger.LogError(ex, "Failed to persist ShowFullscreenSeekButtons={Show}.", show);
             return new PlayerUiSettings { ShowFullscreenSeekButtons = show };
+        }
+        finally
+        {
+            _ioLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<PlayerUiSettings> SetVisualizerPreferencesAsync(
+        bool isEnabled,
+        string selectedVisualizerId,
+        string? lastActiveVisualizerId = null,
+        CancellationToken cancellationToken = default)
+    {
+        string normalizedSelected = string.IsNullOrWhiteSpace(selectedVisualizerId)
+            ? (isEnabled ? "NeonTerrainPeaks" : "BackdropOnly")
+            : selectedVisualizerId.Trim();
+
+        await _ioLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await EnsureLoadedCoreAsync(cancellationToken).ConfigureAwait(false);
+
+            var current = ReadPlayerUiSettingsCore();
+            string resolvedLastActive = !string.IsNullOrWhiteSpace(lastActiveVisualizerId) &&
+                                        !string.Equals(lastActiveVisualizerId, "BackdropOnly", StringComparison.OrdinalIgnoreCase)
+                ? lastActiveVisualizerId.Trim()
+                : (!string.Equals(normalizedSelected, "BackdropOnly", StringComparison.OrdinalIgnoreCase)
+                    ? normalizedSelected
+                    : current.LastActiveVisualizerId);
+
+            var updated = current with
+            {
+                IsGpuVisualizerEnabled = isEnabled,
+                SelectedVisualizerId = normalizedSelected,
+                LastActiveVisualizerId = string.IsNullOrWhiteSpace(resolvedLastActive)
+                    ? "NeonTerrainPeaks"
+                    : resolvedLastActive
+            };
+
+            _cache[PlayerUiSettings.StorageKey] = JsonSerializer.SerializeToElement(updated, _jsonOptions);
+            await PersistCacheCoreAsync(cancellationToken).ConfigureAwait(false);
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to persist visualizer preferences.");
+            return new PlayerUiSettings
+            {
+                IsGpuVisualizerEnabled = isEnabled,
+                SelectedVisualizerId = normalizedSelected,
+                LastActiveVisualizerId = lastActiveVisualizerId ?? "NeonTerrainPeaks"
+            };
         }
         finally
         {

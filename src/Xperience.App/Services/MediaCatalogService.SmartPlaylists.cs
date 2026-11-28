@@ -299,21 +299,25 @@ public sealed partial class MediaCatalogService
             AddUniqueTrackToPool(candidatePool, cachedRec);
         }
 
-        // If candidate pool has fewer than 28 songs, fetch additional tracks from YouTube Music for top user genres/artists
+        // If candidate pool has fewer than 28 songs, fetch additional tracks from YouTube Music
         if (candidatePool.Count < 28)
         {
             try
             {
-                string topArtist = historySnapshot
+                string? topArtist = historySnapshot
                     .Select(h => h.Artist)
-                    .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a)) ?? "MARINA";
+                    .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a));
                 string topGenre = historySnapshot
                     .Select(h => h.Genre)
                     .FirstOrDefault(g => !string.IsNullOrWhiteSpace(g)) ?? "Pop";
 
-                var extraSearch = await _youTubeMusicService
-                    .SearchCatalogAsync($"{topArtist} {topGenre} hits songs", cancellationToken)
-                    .ConfigureAwait(false);
+                var extraSearch = !string.IsNullOrWhiteSpace(topArtist)
+                    ? await _youTubeMusicService
+                        .SearchCatalogAsync($"{topArtist} {topGenre} hits songs", cancellationToken)
+                        .ConfigureAwait(false)
+                    : await _youTubeMusicService
+                        .FetchChartsCatalogAsync(cancellationToken)
+                        .ConfigureAwait(false);
 
                 foreach (var song in extraSearch.Songs)
                 {
@@ -375,7 +379,7 @@ public sealed partial class MediaCatalogService
 
         if (userGenres.Count == 0)
         {
-            userGenres.AddRange(["Pop", "Synthwave", "Indie Pop"]);
+            userGenres.AddRange(["Pop", "Rock", "Electronic"]);
         }
 
         var genreMix25Tracks = new List<TrackItem>();

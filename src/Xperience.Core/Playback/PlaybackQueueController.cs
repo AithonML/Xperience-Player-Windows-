@@ -13,6 +13,8 @@ public sealed class PlaybackQueueController
 {
     private readonly object _gate = new();
     private readonly List<TrackItem> _items = [];
+    private readonly List<TrackItem> _canonicalOrder = [];
+    private readonly HashSet<TrackItem> _playNextPinned = new(ReferenceEqualityComparer.Instance);
     private int _currentIndex = -1;
     private long _queueEpoch;
 
@@ -161,11 +163,14 @@ public sealed class PlaybackQueueController
         lock (_gate)
         {
             _items.Clear();
+            _canonicalOrder.Clear();
+            _playNextPinned.Clear();
             foreach (var track in tracks)
             {
                 if (track is not null)
                 {
                     _items.Add(track);
+                    _canonicalOrder.Add(track);
                 }
             }
 
@@ -179,6 +184,64 @@ public sealed class PlaybackQueueController
 
             _currentIndex = Math.Clamp(startIndex, 0, _items.Count - 1);
             return _items[_currentIndex];
+        }
+    }
+
+    /// <summary>
+    /// Replaces the session queue starting in shuffled order while preserving <paramref name="canonicalTracks"/>
+    /// so disabling Shuffle later restores the original canonical sequence.
+    /// </summary>
+    public TrackItem? SetQueueShuffled(
+        IReadOnlyList<TrackItem> canonicalTracks,
+        int? startCanonicalIndex = null,
+        Random? rng = null)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalTracks);
+
+        lock (_gate)
+        {
+            _items.Clear();
+            _canonicalOrder.Clear();
+            _playNextPinned.Clear();
+
+            foreach (var track in canonicalTracks)
+            {
+                if (track is not null)
+                {
+                    _canonicalOrder.Add(track);
+                }
+            }
+
+            _queueEpoch++;
+
+            if (_canonicalOrder.Count == 0)
+            {
+                _currentIndex = -1;
+                return null;
+            }
+
+            var random = rng ?? Random.Shared;
+            int chosenIdx = startCanonicalIndex.HasValue
+                ? Math.Clamp(startCanonicalIndex.Value, 0, _canonicalOrder.Count - 1)
+                : random.Next(_canonicalOrder.Count);
+
+            _items.Add(_canonicalOrder[chosenIdx]);
+            for (int i = 0; i < _canonicalOrder.Count; i++)
+            {
+                if (i != chosenIdx)
+                {
+                    _items.Add(_canonicalOrder[i]);
+                }
+            }
+
+            for (int i = _items.Count - 1; i > 1; i--)
+            {
+                int j = random.Next(1, i + 1);
+                (_items[i], _items[j]) = (_items[j], _items[i]);
+            }
+
+            _currentIndex = 0;
+            return _items[0];
         }
     }
 
@@ -206,7 +269,19 @@ public sealed class PlaybackQueueController
                 return false;
             }
 
+            var oldTrack = _items[_currentIndex];
             _items[_currentIndex] = updatedTrack;
+            if (_playNextPinned.Remove(oldTrack))
+            {
+                _playNextPinned.Add(updatedTrack);
+            }
+
+            int canonIdx = FindCanonicalIndexLocked(oldTrack);
+            if (canonIdx >= 0)
+            {
+                _canonicalOrder[canonIdx] = updatedTrack;
+            }
+
             return true;
         }
     }
@@ -327,11 +402,22 @@ public sealed class PlaybackQueueController
             if (_items.Count == 0 || _currentIndex < 0)
             {
                 _items.Add(track);
+                _canonicalOrder.Add(track);
                 _currentIndex = 0;
                 return;
             }
 
             _items.Insert(_currentIndex + 1, track);
+            _playNextPinned.Add(track);
+            int canonIdx = FindCanonicalIndexLocked(_items[_currentIndex]);
+            if (canonIdx >= 0 && canonIdx < _canonicalOrder.Count)
+            {
+                _canonicalOrder.Insert(canonIdx + 1, track);
+            }
+            else
+            {
+                _canonicalOrder.Add(track);
+            }
         }
     }
 
@@ -348,24 +434,93 @@ public sealed class PlaybackQueueController
             if (_items.Count == 0 || _currentIndex < 0)
             {
                 _items.Add(track);
+                _canonicalOrder.Add(track);
                 _currentIndex = 0;
                 return;
             }
 
             _items.Add(track);
+            _canonicalOrder.Add(track);
         }
     }
 
     /// <summary>
-    /// Fisher-Yates shuffles only the upcoming portion (<c>CurrentIndex + 1 .. Count - 1</c>)
-    /// without incrementing <see cref="QueueEpoch"/>.
+    /// Fisher-Yates shuffles only the non-pinned upcoming portion (<c>CurrentIndex + 1 .. Count - 1</c>)
+    /// without incrementing <see cref="QueueEpoch"/>, preserving canonical order for later unshuffling.
     /// </summary>
-    /// <returns><c>true</c> if at least two upcoming items were shuffled; otherwise <c>false</c>.</returns>
+    /// <returns><c>true</c> if at least two upcoming items were reordered or shuffled; otherwise <c>false</c>.</returns>
     public bool ShuffleUpcoming(Random? rng = null)
     {
         lock (_gate)
         {
             if (_currentIndex < 0)
+            {
+                return false;
+            }
+
+            if (_canonicalOrder.Count == 0 && _items.Count > 0)
+            {
+                _canonicalOrder.AddRange(_items);
+            }
+
+            int start = _currentIndex + 1;
+            int count = _items.Count - start;
+            if (count <= 1)
+            {
+                return false;
+            }
+
+            var pinned = new List<TrackItem>();
+            var unpinned = new List<TrackItem>(count);
+            for (int i = start; i < _items.Count; i++)
+            {
+                var item = _items[i];
+                if (_playNextPinned.Contains(item))
+                {
+                    pinned.Add(item);
+                }
+                else
+                {
+                    unpinned.Add(item);
+                }
+            }
+
+            if (unpinned.Count <= 1 && pinned.Count == 0)
+            {
+                return false;
+            }
+
+            var random = rng ?? Random.Shared;
+            for (int i = unpinned.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(0, i + 1);
+                (unpinned[i], unpinned[j]) = (unpinned[j], unpinned[i]);
+            }
+
+            int writeIdx = start;
+            foreach (var p in pinned)
+            {
+                _items[writeIdx++] = p;
+            }
+
+            foreach (var u in unpinned)
+            {
+                _items[writeIdx++] = u;
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Restores the upcoming queue (<c>CurrentIndex + 1 .. Count - 1</c>) back to its canonical unshuffled sequence
+    /// relative to <see cref="CurrentTrack"/>, keeping played history and pinned "Play Next" tracks intact.
+    /// </summary>
+    public bool UnshuffleUpcoming()
+    {
+        lock (_gate)
+        {
+            if (_currentIndex < 0 || _canonicalOrder.Count == 0)
             {
                 return false;
             }
@@ -377,14 +532,143 @@ public sealed class PlaybackQueueController
                 return false;
             }
 
-            var random = rng ?? Random.Shared;
-            for (int i = _items.Count - 1; i > start; i--)
+            var current = _items[_currentIndex];
+            var pinned = new List<TrackItem>();
+            var remaining = new List<TrackItem>(count);
+            for (int i = start; i < _items.Count; i++)
             {
-                int j = random.Next(start, i + 1);
-                (_items[i], _items[j]) = (_items[j], _items[i]);
+                var item = _items[i];
+                if (_playNextPinned.Contains(item))
+                {
+                    pinned.Add(item);
+                }
+                else
+                {
+                    remaining.Add(item);
+                }
             }
 
-            return true;
+            if (remaining.Count <= 1)
+            {
+                return false;
+            }
+
+            int anchorIdx = FindCanonicalIndexLocked(current);
+            var usedCanonicalSlots = new HashSet<int>();
+            var keyedWithRank = new List<(TrackItem Track, int CanonicalRank, int FallbackOrder)>(remaining.Count);
+
+            for (int idx = 0; idx < remaining.Count; idx++)
+            {
+                var item = remaining[idx];
+                int slot = FindAvailableCanonicalIndexLocked(item, anchorIdx, usedCanonicalSlots);
+                if (slot >= 0)
+                {
+                    usedCanonicalSlots.Add(slot);
+                    int rank = anchorIdx >= 0
+                        ? (slot > anchorIdx ? slot - anchorIdx - 1 : (_canonicalOrder.Count - anchorIdx - 1) + slot)
+                        : slot;
+                    keyedWithRank.Add((item, rank, idx));
+                }
+                else
+                {
+                    keyedWithRank.Add((item, int.MaxValue, idx));
+                }
+            }
+
+            keyedWithRank.Sort((a, b) =>
+            {
+                int cmp = a.CanonicalRank.CompareTo(b.CanonicalRank);
+                return cmp != 0 ? cmp : a.FallbackOrder.CompareTo(b.FallbackOrder);
+            });
+
+            bool changed = false;
+            int writeIdx = start;
+            foreach (var p in pinned)
+            {
+                if (!ReferenceEquals(_items[writeIdx], p))
+                {
+                    changed = true;
+                }
+                _items[writeIdx++] = p;
+            }
+
+            foreach (var entry in keyedWithRank)
+            {
+                if (!ReferenceEquals(_items[writeIdx], entry.Track))
+                {
+                    changed = true;
+                }
+                _items[writeIdx++] = entry.Track;
+            }
+
+            return changed;
+        }
+    }
+
+    /// <summary>
+    /// Atomically captures the full queue, current index, and canonical unshuffled order for session persistence.
+    /// </summary>
+    public (IReadOnlyList<TrackItem> Items, int CurrentIndex, IReadOnlyList<TrackItem> CanonicalOrder) GetSessionSnapshot()
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<TrackItem> items = _items.Count == 0 ? [] : [.. _items];
+            IReadOnlyList<TrackItem> canonical = _canonicalOrder.Count == 0
+                ? items
+                : [.. _canonicalOrder];
+            return (items, _currentIndex, canonical);
+        }
+    }
+
+    /// <summary>
+    /// Restores a previously persisted queue session atomically without discarding canonical unshuffled order.
+    /// </summary>
+    public TrackItem? RestoreSession(
+        IReadOnlyList<TrackItem> items,
+        int currentIndex,
+        IReadOnlyList<TrackItem>? canonicalOrder = null)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        lock (_gate)
+        {
+            _items.Clear();
+            _canonicalOrder.Clear();
+            _playNextPinned.Clear();
+
+            foreach (var track in items)
+            {
+                if (track is not null)
+                {
+                    _items.Add(track);
+                }
+            }
+
+            if (canonicalOrder is { Count: > 0 })
+            {
+                foreach (var track in canonicalOrder)
+                {
+                    if (track is not null)
+                    {
+                        _canonicalOrder.Add(track);
+                    }
+                }
+            }
+            else
+            {
+                _canonicalOrder.AddRange(_items);
+            }
+
+            _queueEpoch++;
+
+            if (_items.Count == 0)
+            {
+                _currentIndex = -1;
+                return null;
+            }
+
+            _currentIndex = Math.Clamp(currentIndex, 0, _items.Count - 1);
+            return _items[_currentIndex];
         }
     }
 
@@ -554,6 +838,7 @@ public sealed class PlaybackQueueController
             }
 
             _items.AddRange(unique);
+            _canonicalOrder.AddRange(unique);
 
             if (_currentIndex > 30)
             {
@@ -692,5 +977,95 @@ public sealed class PlaybackQueueController
         }
 
         return accepted;
+    }
+
+    private int FindCanonicalIndexLocked(TrackItem? track)
+    {
+        if (track is null || _canonicalOrder.Count == 0)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < _canonicalOrder.Count; i++)
+        {
+            if (ReferenceEquals(_canonicalOrder[i], track))
+            {
+                return i;
+            }
+        }
+
+        string? key = BuildCanonicalMatchKey(track);
+        if (string.IsNullOrEmpty(key))
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < _canonicalOrder.Count; i++)
+        {
+            if (string.Equals(BuildCanonicalMatchKey(_canonicalOrder[i]), key, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private int FindAvailableCanonicalIndexLocked(TrackItem track, int anchorIdx, HashSet<int> usedSlots)
+    {
+        int count = _canonicalOrder.Count;
+        if (count == 0)
+        {
+            return -1;
+        }
+
+        int startSearch = anchorIdx >= 0 ? (anchorIdx + 1) % count : 0;
+
+        for (int offset = 0; offset < count; offset++)
+        {
+            int idx = (startSearch + offset) % count;
+            if (!usedSlots.Contains(idx) && ReferenceEquals(_canonicalOrder[idx], track))
+            {
+                return idx;
+            }
+        }
+
+        string? key = BuildCanonicalMatchKey(track);
+        if (string.IsNullOrEmpty(key))
+        {
+            return -1;
+        }
+
+        for (int offset = 0; offset < count; offset++)
+        {
+            int idx = (startSearch + offset) % count;
+            if (!usedSlots.Contains(idx) &&
+                string.Equals(BuildCanonicalMatchKey(_canonicalOrder[idx]), key, StringComparison.OrdinalIgnoreCase))
+            {
+                return idx;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string BuildCanonicalMatchKey(TrackItem track)
+    {
+        if (!string.IsNullOrWhiteSpace(track.YouTubeVideoId))
+        {
+            return "ytm:" + track.YouTubeVideoId.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(track.Id))
+        {
+            return "id:" + track.Id.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(track.AudioSourceUri))
+        {
+            return "uri:" + track.AudioSourceUri.Trim();
+        }
+
+        return TrackDeduplicationHelper.BuildTitleArtistKey(track.Title, track.Artist);
     }
 }

@@ -110,4 +110,52 @@
   <data name="Update_ErrorDownloadFailed" xml:space="preserve"><value>Error durante la descarga de la actualización: {0}</value></data>
   <data name="Update_ErrorLaunchFailed" xml:space="preserve"><value>No se pudo iniciar el instalador verificado: {0}</value></data>
   <data name="Update_ErrorUacCancelled" xml:space="preserve"><value>Instalación cancelada en el aviso de permisos de Windows (UAC).</value></data>
+  <data name="Settings_NavPlayback.Content" xml:space="preserve"><value>Reproducción y Calidad</value></data>
+  <data name="Settings_NavDataUsage.Content" xml:space="preserve"><value>Uso de Datos</value></data>
+  <data name="Settings_PlaybackTitle.Text" xml:space="preserve"><value>Reproducción y Calidad de Audio</value></data>
+  <data name="Settings_PlaybackSubtitle.Text" xml:space="preserve"><value>Configura la calidad de streaming, FLAC Lossless directo, precarga sin pausas y el comportamiento de volumen.</value></data>
+  <data name="Settings_StreamingQualityTitle.Text" xml:space="preserve"><value>Calidad de Streaming Online</value></data>
+  <data name="Settings_FlacFallbackNote.Text" xml:space="preserve"><value>Los flujos FLAC Lossless se verifican antes de reproducirse. Si una canción no está disponible en FLAC, se reproducirá automáticamente en YouTube Music Alta (160 kbps) indicándolo en Información de la canción.</value></data>
+  <data name="Settings_GaplessPreloadTitle.Text" xml:space="preserve"><value>Precarga de la siguiente canción (Gapless)</value></data>
+  <data name="Settings_GaplessPreloadDesc.Text" xml:space="preserve"><value>Precarga la siguiente canción antes de que termine la actual para transiciones continuas sin silencios.</value></data>
+  <data name="Settings_PauseAtZeroVolumeTitle.Text" xml:space="preserve"><value>Pausar al volumen 0</value></data>
+  <data name="Settings_PauseAtZeroVolumeDesc.Text" xml:space="preserve"><value>Pausa automáticamente la reproducción cuando el volumen de la app o de Windows baja a 0 (o se silencia) y la reanuda al subir ambos por encima de 0.</value></data>
+  <data name="Settings_DataUsageTitle.Text" xml:space="preserve"><value>Uso de Datos y Restricciones</value></data>
+  <data name="Settings_DataUsageSubtitle.Text" xml:space="preserve"><value>Supervisa el consumo de red por canción, establece límites automáticos y descarga canciones escuchadas frecuentemente.</value></data>
+  <data name="Settings_DataUsagePeriodLabel.Text" xml:space="preserve"><value>WiFi / Red (Periodo actual)</value></data>
+  <data name="Settings_DataUsageAllTimeLabel.Text" xml:space="preserve"><value>Consumo de red histórico</value></data>
+  <data name="Settings_DataLimitToggleTitle.Text" xml:space="preserve"><value>Activar límite de uso de datos</value></data>
+  <data name="Settings_DataLimitToggleDesc.Text" xml:space="preserve"><value>Pausa automáticamente el streaming y notifica al alcanzar el límite. Las canciones locales y descargadas siguen reproduciéndose.</value></data>
+  <data name="Settings_SmartDownloadTitle.Text" xml:space="preserve"><value>Sugerencias inteligentes de descarga</value></data>
+  <data name="Settings_SmartDownloadDesc.Text" xml:space="preserve"><value>Canciones reproducidas varias veces en streaming. Descárgalas para ahorrar datos.</value></data>
+  <data name="Settings_DetailedAnalysisTitle.Text" xml:space="preserve"><value>Análisis detallado por canción</value></data>
+  <data name="Settings_LocalScanFilterTitle.Text" xml:space="preserve"><value>Lista negra y lista blanca de escaneo local</value></data>
+  <data name="Settings_LocalScanRescan.Text" xml:space="preserve"><value>Volver a escanear</value></data>
+  <data name="Settings_LocalScanModeLabel.Text" xml:space="preserve"><value>Modo de filtro de escaneo</value></data>
+  <data name="Settings_LocalScanGlobalDepthLabel.Text" xml:space="preserve"><value>Profundidad global de escaneo</value></data>
+  <data name="Settings_AddBlacklistFolder.Text" xml:space="preserve"><value>Añadir a Lista Negra...</value></data>
+  <data name="Settings_AddWhitelistFolder.Text" xml:space="preserve"><value>Añadir a Lista Blanca...</value></data>
+  <data name="Settings_DataUsageChartTitle.Text" xml:space="preserve"><value>Historial de Consumo</value></data>
+  <data name="Settings_DataUsageChartDesc.Text" xml:space="preserve"><value>Visualiza el consumo de red por día, semana o mes</value></data>
+  <data name="Settings_DataUsageGranularityHeader.Text" xml:space="preserve"><value>Intervalo del gráfico</value></data>
+  <data name="Settings_DataUsageGranularityDay.Content" xml:space="preserve"><value>Por Día</value></data>
+  <data name="Settings_DataUsageGranularityWeek.Content" xml:space="preserve"><value>Por Semana</value></data>
+  <data name="Settings_DataUsageGranularityMonth.Content" xml:space="preserve"><value>Por Mes</value></data>
+  <data name="Settings_DataUsageFilterHeader.Text" xml:space="preserve"><value>Filtro de fechas</value></data>
+  <data name="Settings_DataUsageFilterAllTime.Content" xml:space="preserve"><value>Todo el historial</value></data>
+  <data name="Settings_DataUsageFilterDay.Content" xml:space="preserve"><value>Hoy</value></data>
+  <data name="Settings_DataUsageFilterWeek.Content" xml:space="preserve"><value>Últimos 7 días</value></data>
+  <data name="Settings_DataUsageFilterMonth.Content" xml:space="preserve"><value>Últimos 30 días</value></data>
+  <data name="Settings_DataUsageFilterCustom.Content" xml:space="preserve"><value>Rango personalizado</value></data>
+  <data name="Settings_DataUsageSortHeader.Text" xml:space="preserve"><value>Ordenar canciones por</value></data>
+  <data name="Settings_DataUsageSortHighest.Content" xml:space="preserve"><value>Mayor consumo</value></data>
+  <data name="Settings_DataUsageSortDate.Content" xml:space="preserve"><value>Fecha más reciente</value></data>
+  <data name="Settings_DataUsageSortAlpha.Content" xml:space="preserve"><value>Orden alfabético (A-Z)</value></data>
+  <data name="Settings_DataUsageStartDate.Text" xml:space="preserve"><value>Fecha inicial</value></data>
+  <data name="Settings_DataUsageEndDate.Text" xml:space="preserve"><value>Fecha final</value></data>
+  <data name="Settings_ThemeTitle.Text" xml:space="preserve"><value>Tema</value></data>
+  <data name="Settings_ThemeSubtitle.Text" xml:space="preserve"><value>Elige tu apariencia preferida o sincronízala automáticamente con el sistema.</value></data>
+  <data name="Settings_ThemeSystem.Text" xml:space="preserve"><value>Sistema</value></data>
+  <data name="Settings_ThemeDark.Text" xml:space="preserve"><value>Oscuro</value></data>
+  <data name="Settings_ThemeLight.Text" xml:space="preserve"><value>Claro</value></data>
 </root>

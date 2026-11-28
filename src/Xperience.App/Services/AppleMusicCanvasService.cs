@@ -2002,6 +2002,15 @@ public sealed partial class AppleMusicCanvasService : ICanvasArtworkService, IDi
         }
 
         var result = entry.Value;
+        if (!string.IsNullOrWhiteSpace(result.WordmarkUri))
+        {
+            string normalizedWordmark = NormalizeAppleWordmarkUrl(result.WordmarkUri);
+            if (!string.IsNullOrWhiteSpace(normalizedWordmark) &&
+                !string.Equals(normalizedWordmark, result.WordmarkUri, StringComparison.Ordinal))
+            {
+                result = result with { WordmarkUri = normalizedWordmark };
+            }
+        }
         if (!string.IsNullOrWhiteSpace(result.HeaderVideoUri))
         {
             // Only expose HeaderVideoUri synchronously from PeekArtistAssets when the normalized flat
@@ -2597,14 +2606,21 @@ public sealed partial class AppleMusicCanvasService : ICanvasArtworkService, IDi
         var assets = await GetArtistAssetsAsync(artistName, cancellationToken).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(assets?.WordmarkUri))
         {
-            return assets.WordmarkUri;
+            string normalized = NormalizeAppleWordmarkUrl(assets.WordmarkUri);
+            return string.IsNullOrWhiteSpace(normalized) ? assets.WordmarkUri : normalized;
         }
 
         string cleanArtist = CleanArtistName(artistName);
         if (!string.IsNullOrWhiteSpace(cleanArtist) &&
             _wordmarkCache.TryGet(cleanArtist, out string? cachedLogo))
         {
-            return string.Equals(cachedLogo, "NONE", StringComparison.Ordinal) ? null : cachedLogo;
+            if (string.Equals(cachedLogo, "NONE", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            string normalized = NormalizeAppleWordmarkUrl(cachedLogo ?? string.Empty);
+            return string.IsNullOrWhiteSpace(normalized) ? cachedLogo : normalized;
         }
 
         return null;
@@ -2759,15 +2775,17 @@ public sealed partial class AppleMusicCanvasService : ICanvasArtworkService, IDi
             return string.Empty;
         }
 
-        // Replace template placeholders ({w}x{h}{c}.{f} or {w}x{h}bb.{f}) or webp/jpg suffix with crisp 800x266bb.png
-        // so WinUI 3 BitmapImage renders the transparent artist title wordmark natively with alpha channel
+        // Apple Music AMP returns both legacy ".png/{w}x{h}bb.{f}" and opaque-token "/{w}x{h}bb.jpg" URLs.
+        // Requesting .jpg causes Apple's CDN to composite white lettering onto a solid #FFFFFF JPEG rectangle;
+        // always force 800x266bb.png on mzstatic.com/image/thumb/ URLs so 32-bit RGBA alpha transparency is preserved.
+        int thumbIdx = cleaned.IndexOf("/image/thumb/", StringComparison.OrdinalIgnoreCase);
         int lastSlash = cleaned.LastIndexOf('/');
-        if (lastSlash > 0 && cleaned.Contains(".png/", StringComparison.OrdinalIgnoreCase))
+        if (thumbIdx >= 0 && lastSlash > thumbIdx + "/image/thumb/".Length)
         {
             return $"{cleaned[..(lastSlash + 1)]}800x266bb.png";
         }
 
-        return cleaned
+        string normalized = cleaned
             .Replace("{w}x{h}{c}.{f}", "800x266bb.png", StringComparison.OrdinalIgnoreCase)
             .Replace("{w}x{h}bb.{f}", "800x266bb.png", StringComparison.OrdinalIgnoreCase)
             .Replace("{w}", "800", StringComparison.OrdinalIgnoreCase)
@@ -2776,12 +2794,29 @@ public sealed partial class AppleMusicCanvasService : ICanvasArtworkService, IDi
             .Replace("{f}", "png", StringComparison.OrdinalIgnoreCase)
             .Replace("800x266bb.webp", "800x266bb.png", StringComparison.OrdinalIgnoreCase)
             .Replace("400x133bb.webp", "800x266bb.png", StringComparison.OrdinalIgnoreCase);
+
+        if (normalized.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"{normalized[..^4]}.png";
+        }
+        else if (normalized.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"{normalized[..^5]}.png";
+        }
+        else if (normalized.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"{normalized[..^5]}.png";
+        }
+
+        return normalized;
     }
 
     private void LoadPersistedCachesSafe()
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         long nowSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        bool upgradedWordmarks = false;
+        bool upgradedArtistAssets = false;
 
         if (File.Exists(_wordmarkCacheFilePath))
         {
@@ -2793,7 +2828,18 @@ public sealed partial class AppleMusicCanvasService : ICanvasArtworkService, IDi
                 {
                     if (!string.IsNullOrWhiteSpace(kvp.Key) && !_wordmarkCache.ContainsKey(kvp.Key))
                     {
-                        _wordmarkCache.Set(kvp.Key, kvp.Value);
+                        string? val = kvp.Value;
+                        if (!string.IsNullOrWhiteSpace(val) && !string.Equals(val, "NONE", StringComparison.Ordinal))
+                        {
+                            string sanitized = NormalizeAppleWordmarkUrl(val);
+                            if (!string.IsNullOrWhiteSpace(sanitized) && !string.Equals(sanitized, val, StringComparison.Ordinal))
+                            {
+                                val = sanitized;
+                                upgradedWordmarks = true;
+                            }
+                        }
+
+                        _wordmarkCache.Set(kvp.Key, val);
                     }
                 }
             }
@@ -2839,10 +2885,33 @@ public sealed partial class AppleMusicCanvasService : ICanvasArtworkService, IDi
                         (kvp.Value.ExpiresAtUnixMs > nowMs || kvp.Value.StaleUntilUnixMs > nowMs) &&
                         !_artistAssetsCache.ContainsKey(kvp.Key))
                     {
-                        _artistAssetsCache.Set(kvp.Key, kvp.Value);
+                        var entryVal = kvp.Value;
+                        if (entryVal.Value is not null && !string.IsNullOrWhiteSpace(entryVal.Value.WordmarkUri))
+                        {
+                            string sanitized = NormalizeAppleWordmarkUrl(entryVal.Value.WordmarkUri);
+                            if (!string.IsNullOrWhiteSpace(sanitized) &&
+                                !string.Equals(sanitized, entryVal.Value.WordmarkUri, StringComparison.Ordinal))
+                            {
+                                entryVal = entryVal with
+                                {
+                                    Value = entryVal.Value with { WordmarkUri = sanitized }
+                                };
+                                upgradedArtistAssets = true;
+                            }
+                        }
+
+                        _artistAssetsCache.Set(kvp.Key, entryVal);
                     }
                 }
             }
+        }
+
+        if (upgradedWordmarks || upgradedArtistAssets)
+        {
+            _ = Task.Run(() =>
+            {
+                try { PersistAllArtistCachesSafe(); } catch { }
+            });
         }
 
         if (File.Exists(_albumCanvasCacheFilePath))

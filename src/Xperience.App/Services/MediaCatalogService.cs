@@ -57,6 +57,7 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
     private readonly List<TrackItem> _likedOnlineTracks = [];
     private readonly HashSet<string> _likedOnlineTrackIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _localMusicDirectories = [];
+    private LocalScanFilterSettings _localScanFilterSettings = new();
     private readonly List<UserPlaylist> _playlists = [];
     private readonly Dictionary<string, long> _trackAddedAtMap = new(StringComparer.OrdinalIgnoreCase);
     private CatalogQueryResult? _cachedOnlineLibraryCatalog;
@@ -108,6 +109,15 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             _lyricsCacheDir = Path.Combine(appDataRoot, "LyricsCache");
             Directory.CreateDirectory(_albumArtCacheDir);
             Directory.CreateDirectory(_lyricsCacheDir);
+
+            var savedScanFilter = await _storageService.LoadAsync<LocalScanFilterSettings>(
+                LocalScanFilterSettings.StorageKey,
+                defaultValue: null,
+                cancellationToken).ConfigureAwait(false);
+            if (savedScanFilter is not null)
+            {
+                _localScanFilterSettings = savedScanFilter;
+            }
 
             // 1. Load persistent first-seen/added timestamps and previously scanned tracks
             var savedAddedAt = await _storageService.LoadAsync<Dictionary<string, long>>(
@@ -304,22 +314,6 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
 
                 albumsChanged = _recentlyPlayedAlbums.Count > 0;
             }
-            else if (_tracks.Count > 0)
-            {
-                foreach (var localTrack in _tracks)
-                {
-                    if (_recentlyPlayedAlbums.Count >= 12)
-                    {
-                        break;
-                    }
-
-                    var seeded = CreateRecentAlbumFromTrack(localTrack);
-                    if (_recentlyPlayedAlbums.All(a => !a.MatchesAlbum(seeded)))
-                    {
-                        _recentlyPlayedAlbums.Add(seeded);
-                    }
-                }
-            }
 
             _recentlyPlayedTracks.Clear();
             if (_recentlyPlayedAlbums.Count > 0)
@@ -335,21 +329,6 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             else if (sanitizedLegacyRecent.Count > 0)
             {
                 _recentlyPlayedTracks.AddRange(sanitizedLegacyRecent);
-            }
-            else if (_tracks.Count > 0)
-            {
-                foreach (var localTrack in _tracks)
-                {
-                    if (_recentlyPlayedTracks.Count >= 12)
-                    {
-                        break;
-                    }
-
-                    if (_recentlyPlayedTracks.All(t => !IsSameAlbumOrTrack(t, localTrack)))
-                    {
-                        _recentlyPlayedTracks.Add(localTrack);
-                    }
-                }
             }
 
             if (albumsChanged)
@@ -1615,7 +1594,7 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
         var discovered = await Task.Run(() =>
         {
             var results = new List<TrackItem>();
-            var files = EnumerateAudioFilesSafe(folderPath);
+            var files = EnumerateAudioFilesSafe(folderPath, _localScanFilterSettings);
 
             int count = 0;
             foreach (var file in files)
@@ -1907,49 +1886,19 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             }
         }
 
-        if (recentList.Count == 0 && localSnapshot.Count > 0)
-        {
-            foreach (var localTrack in localSnapshot)
-            {
-                if (recentList.Count >= 12)
-                {
-                    break;
-                }
-
-                if (recentList.All(t => !IsSameAlbumOrTrack(t, localTrack)))
-                {
-                    recentList.Add(localTrack);
-                }
-            }
-        }
-
-        if (recentAlbums.Count == 0 && recentList.Count > 0)
-        {
-            foreach (var t in recentList)
-            {
-                var cand = CreateRecentAlbumFromTrack(t);
-                if (recentAlbums.All(a => !a.MatchesAlbum(cand)))
-                {
-                    recentAlbums.Add(cand);
-                }
-            }
-        }
-
-        // Extract top seed artists and genres from recently played albums/tracks
+        // Extract seed artists strictly from real user listening history (Recently Played + Liked).
+        // When fresh (no playback history yet), keep seedArtists empty and load YouTube Music's general feed.
         var seedArtists = recentAlbums
             .Select(a => GetPrimaryArtistName(a.Artist))
             .Concat(recentList.Select(t => GetPrimaryArtistName(t.Artist)))
-            .Where(a => !string.IsNullOrWhiteSpace(a) && !a.Equals("Unknown Artist", StringComparison.OrdinalIgnoreCase))
+            .Concat(likedSnapshot.Select(t => GetPrimaryArtistName(t.Artist)))
+            .Where(IsValidSeedArtist)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(3)
             .ToList();
 
-        if (seedArtists.Count == 0)
-        {
-            seedArtists.AddRange(["MARINA", "The Weeknd", "Daft Punk"]);
-        }
-
-        string primarySeedArtist = seedArtists[0];
+        bool hasUserSeeds = seedArtists.Count > 0;
+        string? primarySeedArtist = hasUserSeeds ? seedArtists[0] : null;
 
         var excludedGenreLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1971,7 +1920,7 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             }
         }
 
-        foreach (string defaultGenre in new[] { "Pop", "Synthwave", "Alternative", "Electronic", "Indie Pop", "R&B", "Rock" })
+        foreach (string defaultGenre in new[] { "Pop", "Hip-Hop", "Rock", "Electronic", "R&B", "Latin", "Alternative" })
         {
             if (genreTags.Count < 7 && !genreTags.Contains(defaultGenre, StringComparer.OrdinalIgnoreCase))
             {
@@ -1985,23 +1934,43 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
               ?? "Pop"
             : genreTags.FirstOrDefault() ?? "Pop";
 
-        // 2. Fetch Home feed, Explore releases/radios, playlists, and catalog searches in parallel directly from YouTube Music
-        string recQuery = seedArtists.Count >= 2
-            ? $"{seedArtists[0]} {seedArtists[1]} mix songs"
-            : $"{primarySeedArtist} similar songs";
+        // 2. Fetch Home feed, Explore releases/radios, and either user-seeded recommendations (when history exists)
+        //    or YouTube Music's general Charts/Home feed (when fresh with no listening history yet).
+        var emptyCatalog = new CatalogQueryResult([], [], [], []);
 
-        string relatedArtistQuery = $"{primarySeedArtist} related artists";
+        Task<CatalogQueryResult> recTask;
+        Task<CatalogQueryResult> artistSearchTask;
+        Task<ArtistDetailProfile?> seedArtistProfileTask;
+        Task<IReadOnlyList<RecommendedPlaylistItem>> seedPlaylistTask;
+        Task<CatalogQueryResult> chartsTask;
 
-        var recTask = _youTubeMusicService.SearchCatalogAsync(recQuery, cancellationToken);
+        if (hasUserSeeds && primarySeedArtist is not null)
+        {
+            string recQuery = seedArtists.Count >= 2
+                ? $"{seedArtists[0]} {seedArtists[1]} mix songs"
+                : $"{primarySeedArtist} similar songs";
+
+            recTask = _youTubeMusicService.SearchCatalogAsync(recQuery, cancellationToken);
+            artistSearchTask = _youTubeMusicService.SearchCatalogAsync($"{primarySeedArtist} related artists", cancellationToken);
+            seedArtistProfileTask = _youTubeMusicService.GetArtistProfileAsync(primarySeedArtist, cancellationToken);
+            seedPlaylistTask = _youTubeMusicService.SearchPlaylistsAsync($"{primarySeedArtist} mix", 6, cancellationToken);
+            chartsTask = Task.FromResult(emptyCatalog);
+        }
+        else
+        {
+            recTask = Task.FromResult(emptyCatalog);
+            artistSearchTask = Task.FromResult(emptyCatalog);
+            seedArtistProfileTask = Task.FromResult<ArtistDetailProfile?>(null);
+            seedPlaylistTask = Task.FromResult<IReadOnlyList<RecommendedPlaylistItem>>([]);
+            chartsTask = _youTubeMusicService.FetchChartsCatalogAsync(cancellationToken);
+        }
+
         var genreTask = _youTubeMusicService.SearchCatalogAsync($"{activeGenre} hits songs", cancellationToken);
-        var artistSearchTask = _youTubeMusicService.SearchCatalogAsync(relatedArtistQuery, cancellationToken);
-        var seedArtistProfileTask = _youTubeMusicService.GetArtistProfileAsync(primarySeedArtist, cancellationToken);
         var accountRecTask = _youTubeMusicService.IsAuthenticated
             ? _youTubeMusicService.GetAccountPersonalizedRecommendationsAsync(cancellationToken)
             : Task.FromResult<IReadOnlyList<TrackItem>>([]);
         var homeFeedTask = _youTubeMusicService.FetchPersonalizedHomeFeedAsync(cancellationToken);
         var exploreAndReleasesTask = _youTubeMusicService.FetchExploreAndNewReleasesAsync(cancellationToken);
-        var seedPlaylistTask = _youTubeMusicService.SearchPlaylistsAsync($"{primarySeedArtist} mix", 6, cancellationToken);
         var genrePlaylistTask = _youTubeMusicService.SearchPlaylistsAsync($"{activeGenre} hits", 6, cancellationToken);
 
         await Task.WhenAll(
@@ -2013,7 +1982,8 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             homeFeedTask,
             exploreAndReleasesTask,
             seedPlaylistTask,
-            genrePlaylistTask).ConfigureAwait(false);
+            genrePlaylistTask,
+            chartsTask).ConfigureAwait(false);
 
         var recCatalog = await recTask.ConfigureAwait(false);
         var genreCatalog = await genreTask.ConfigureAwait(false);
@@ -2024,13 +1994,14 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
         var (exploreReleases, exploreRadios) = await exploreAndReleasesTask.ConfigureAwait(false);
         var seedPlaylists = await seedPlaylistTask.ConfigureAwait(false);
         var genrePlaylists = await genrePlaylistTask.ConfigureAwait(false);
+        var chartsCatalog = await chartsTask.ConfigureAwait(false);
 
-        // Combine Home feed tracks, account feed, and search recommendations
+        // Combine Home feed tracks, account feed, and either personalized recommendations or general charts
         var combinedRecommendedSongs = new List<TrackItem>();
         foreach (var s in homeFeed.PersonalizedTracks
                      .Concat(accountPersonalizedTracks)
                      .Concat(recCatalog.Songs)
-                     .Concat(localSnapshot.Take(6)))
+                     .Concat(chartsCatalog.Songs))
         {
             DecorateTrackWithLocalOfflineMatch(s);
             if (combinedRecommendedSongs.All(x => !string.Equals(x.Title, s.Title, StringComparison.OrdinalIgnoreCase)))
@@ -2049,36 +2020,7 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             DecorateTrackWithLocalOfflineMatch(rs);
         }
 
-        // If recentList / recentAlbums were empty (brand-new install with no local files), seed from recommended songs deduplicated by album
-        if (recentList.Count == 0 && combinedRecommendedSongs.Count > 0)
-        {
-            foreach (var recTrack in combinedRecommendedSongs)
-            {
-                if (recentList.Count >= 10)
-                {
-                    break;
-                }
-
-                if (recentList.All(t => !IsSameAlbumOrTrack(t, recTrack)))
-                {
-                    recentList.Add(recTrack);
-                }
-            }
-        }
-
-        if (recentAlbums.Count == 0 && recentList.Count > 0)
-        {
-            foreach (var recTrack in recentList)
-            {
-                var seeded = CreateRecentAlbumFromTrack(recTrack);
-                if (recentAlbums.All(a => !a.MatchesAlbum(seeded)))
-                {
-                    recentAlbums.Add(seeded);
-                }
-            }
-        }
-
-        // Build related artists list exclusively from YouTube Music
+        // Build related/featured artists from real user seeds when available, otherwise from general YouTube Music charts
         var relatedArtists = new List<ArtistItem>();
         if (seedArtistProfile?.SimilarArtists is { Count: > 0 })
         {
@@ -2091,7 +2033,11 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             }
         }
 
-        foreach (var a in relatedCatalog.Artists.Concat(recCatalog.Artists).Concat(recCatalog.RecommendedArtists))
+        foreach (var a in relatedCatalog.Artists
+                     .Concat(recCatalog.Artists)
+                     .Concat(recCatalog.RecommendedArtists)
+                     .Concat(chartsCatalog.Artists)
+                     .Concat(hasUserSeeds ? [] : genreCatalog.Artists))
         {
             if (relatedArtists.All(x => !string.Equals(x.Name, a.Name, StringComparison.OrdinalIgnoreCase)))
             {
@@ -2128,8 +2074,9 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
         var recommendedAlbums = new List<AlbumItem>();
         foreach (var alb in homeFeed.PersonalizedAlbums
                      .Concat(recCatalog.Albums)
+                     .Concat(chartsCatalog.Albums)
                      .Concat(genreCatalog.Albums)
-                     .Concat(albumsSnapshot))
+                     .Concat(hasUserSeeds ? albumsSnapshot : []))
         {
             if (recommendedAlbums.All(x => !string.Equals(x.Title, alb.Title, StringComparison.OrdinalIgnoreCase)))
             {
@@ -2355,7 +2302,9 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
             })
             .ToList();
 
-        string subtitle = $"Inspired by {string.Join(", ", seedArtists.Take(3))}";
+        string subtitle = hasUserSeeds
+            ? $"Inspired by {string.Join(", ", seedArtists.Take(3))}"
+            : "Discover trending music on YouTube Music";
 
         _cachedRecommendedPool = combinedRecommendedSongs.Concat(genreCatalog.Songs).Take(40).ToList();
         var smartSuggestedPlaylists = await GetSmartPlaylistSuggestionsAsync(cancellationToken).ConfigureAwait(false);
@@ -2682,14 +2631,24 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
     public async Task<ArtistDetailProfile> GetArtistDetailAsync(
         string artistName,
         string? existingAvatarUri = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? explicitBrowseId = null)
     {
         await InitializeAsync(cancellationToken).ConfigureAwait(false);
 
-        string cleanArtist = string.IsNullOrWhiteSpace(artistName) ? "MARINA" : GetPrimaryArtistName(artistName);
+        if (string.IsNullOrWhiteSpace(artistName))
+        {
+            return new ArtistDetailProfile
+            {
+                Name = string.Empty,
+                AvatarUri = existingAvatarUri ?? string.Empty
+            };
+        }
+
+        string cleanArtist = GetPrimaryArtistName(artistName);
 
         // 1. Fetch official YouTube Music Artist Profile + Apple Music editorial assets (wordmark, motion video, banner, colors) in parallel
-        var ytProfileTask = _youTubeMusicService.GetArtistProfileAsync(cleanArtist, cancellationToken);
+        var ytProfileTask = _youTubeMusicService.GetArtistProfileAsync(cleanArtist, cancellationToken, explicitBrowseId);
         var appleAssetsTask = _canvasArtworkService.GetArtistAssetsAsync(cleanArtist, cancellationToken);
 
         await Task.WhenAll(ytProfileTask, appleAssetsTask).ConfigureAwait(false);
@@ -3836,12 +3795,43 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
         return plainResult;
     }
 
-    private static IEnumerable<string> EnumerateAudioFilesSafe(string rootFolder)
+    private static IEnumerable<string> EnumerateAudioFilesSafe(
+        string rootFolder,
+        LocalScanFilterSettings? filterSettings = null)
     {
+        bool recurse = filterSettings?.GlobalDeepScan ?? true;
+        if (filterSettings is not null)
+        {
+            string normRoot = Xperience.Core.Playback.LocalScanFilterEvaluator.NormalizeDirectoryPath(rootFolder);
+            var matchingRule = filterSettings.Rules.FirstOrDefault(r =>
+                string.Equals(
+                    Xperience.Core.Playback.LocalScanFilterEvaluator.NormalizeDirectoryPath(r.FolderPath),
+                    normRoot,
+                    StringComparison.OrdinalIgnoreCase));
+            if (matchingRule is not null)
+            {
+                recurse = Xperience.Core.Playback.LocalScanFilterEvaluator.ResolveEffectiveDeepScan(
+                    matchingRule.DepthMode,
+                    filterSettings.GlobalDeepScan);
+            }
+            else if (filterSettings.FilterMode == LocalScanFilterMode.Whitelist)
+            {
+                // When scanning a root directory under Whitelist mode, recurse if any whitelist rule is inside it
+                bool hasNestedWhitelist = filterSettings.Rules.Any(r =>
+                    r.ListType == FolderScanListType.Whitelist &&
+                    Xperience.Core.Playback.LocalScanFilterEvaluator.NormalizeDirectoryPath(r.FolderPath)
+                        .StartsWith(normRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                if (hasNestedWhitelist)
+                {
+                    recurse = true;
+                }
+            }
+        }
+
         var options = new EnumerationOptions
         {
             IgnoreInaccessible = true,
-            RecurseSubdirectories = true,
+            RecurseSubdirectories = recurse,
             ReturnSpecialDirectories = false
         };
 
@@ -3849,6 +3839,7 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
         {
             return Directory.EnumerateFiles(rootFolder, "*.*", options)
                 .Where(f => SupportedAudioExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+                .Where(f => Xperience.Core.Playback.LocalScanFilterEvaluator.ShouldIncludeFile(f, filterSettings))
                 .ToList();
         }
         catch
@@ -3988,6 +3979,121 @@ public sealed partial class MediaCatalogService : IMediaCatalogService
         }
 
         await _storageService.SaveAsync(PersistedLocalDirectoriesKey, snapshotDirs, cancellationToken).ConfigureAwait(false);
+        await PersistCatalogSnapshotAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public LocalScanFilterSettings GetLocalScanFilterSettings()
+    {
+        lock (_localMusicDirectories)
+        {
+            return _localScanFilterSettings with
+            {
+                Rules = [.. _localScanFilterSettings.Rules]
+            };
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task UpdateLocalScanFilterSettingsAsync(
+        LocalScanFilterSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        lock (_localMusicDirectories)
+        {
+            _localScanFilterSettings = settings with
+            {
+                Rules = [.. settings.Rules]
+            };
+        }
+
+        await _storageService.SaveAsync(LocalScanFilterSettings.StorageKey, settings, cancellationToken).ConfigureAwait(false);
+        await RescanLocalLibraryAsync(progress: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task RescanLocalLibraryAsync(
+        IProgress<int>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        List<string> dirsToScan;
+        LocalScanFilterSettings activeFilter;
+        lock (_localMusicDirectories)
+        {
+            activeFilter = _localScanFilterSettings with { Rules = [.. _localScanFilterSettings.Rules] };
+            dirsToScan = [.. _localMusicDirectories];
+        }
+
+        if (activeFilter.FilterMode == LocalScanFilterMode.Whitelist)
+        {
+            foreach (var rule in activeFilter.Rules.Where(r => r.ListType == FolderScanListType.Whitelist))
+            {
+                if (!string.IsNullOrWhiteSpace(rule.FolderPath) &&
+                    Directory.Exists(rule.FolderPath) &&
+                    !dirsToScan.Contains(rule.FolderPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    dirsToScan.Add(rule.FolderPath);
+                }
+            }
+        }
+
+        var rescanned = await Task.Run(() =>
+        {
+            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var results = new List<TrackItem>();
+            int count = 0;
+
+            foreach (string dir in dirsToScan)
+            {
+                if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                {
+                    continue;
+                }
+
+                foreach (string file in EnumerateAudioFilesSafe(dir, activeFilter))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!seenPaths.Add(file))
+                    {
+                        continue;
+                    }
+
+                    var track = CreateTrackFromFile(file);
+                    results.Add(track);
+                    count++;
+                    progress?.Report(count);
+                }
+            }
+
+            lock (_tracks)
+            {
+                var likedPaths = new HashSet<string>(
+                    _tracks.Where(t => t.IsLiked && !string.IsNullOrWhiteSpace(t.AudioSourceUri))
+                           .Select(t => t.AudioSourceUri),
+                    StringComparer.OrdinalIgnoreCase);
+
+                _tracks.Clear();
+                foreach (var item in results)
+                {
+                    if (likedPaths.Contains(item.AudioSourceUri))
+                    {
+                        item.IsLiked = true;
+                    }
+
+                    _tracks.Add(item);
+                }
+
+                RebuildAlbumsAndArtistsFromTracks();
+            }
+
+            return results;
+        }, cancellationToken).ConfigureAwait(false);
+
         await PersistCatalogSnapshotAsync(cancellationToken).ConfigureAwait(false);
     }
 

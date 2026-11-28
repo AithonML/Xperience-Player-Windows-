@@ -265,12 +265,18 @@ public sealed class LiquidGlassGpuShaderEngine : IDisposable
     /// </summary>
     public bool UpdateAmbientPalette(Color top, Color middle, Color bottom, Color accent)
     {
+        static bool ColorsClose(Color a, Color b) =>
+            a.A == b.A &&
+            Math.Abs(a.R - b.R) <= 2 &&
+            Math.Abs(a.G - b.G) <= 2 &&
+            Math.Abs(a.B - b.B) <= 2;
+
         lock (_gpuLock)
         {
-            if (_ambientTop == top &&
-                _ambientMiddle == middle &&
-                _ambientBottom == bottom &&
-                _accentHighlight == accent)
+            if (ColorsClose(_ambientTop, top) &&
+                ColorsClose(_ambientMiddle, middle) &&
+                ColorsClose(_ambientBottom, bottom) &&
+                ColorsClose(_accentHighlight, accent))
             {
                 return false;
             }

@@ -11,6 +11,7 @@ using Xperience.Core.Collections;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
 using Xperience.Core.Domain.Models;
+using Xperience.Core.Playback;
 using YoutubeExplode;
 using YoutubeExplode.Videos.Streams;
 
@@ -69,7 +70,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     private const string YtMusicArtistsFilterParams = "EgWKAQIgAWoMEA4QChADEAQQCRAF";
     private const string YtMusicPlaylistsFilterParams = "EgWKAQIoAWoMEA4QChADEAQQCRAF";
     private const string MoodsAndGenresBrowseId = "FEmusic_moods_and_genres";
-    private const string DefaultDiscoveryQuery = "Top Global Hits 2025 Pop Synthwave";
+    private const string DefaultDiscoveryQuery = "Top Global Hits";
     private static readonly TimeSpan MoodsCacheTtl = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan RichSearchCacheTtl = TimeSpan.FromMinutes(15);
 
@@ -89,6 +90,8 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     private readonly BoundedLruCache<string, string> _artistAudienceCache = new(maxCapacity: 500, comparer: StringComparer.OrdinalIgnoreCase);
     private readonly BoundedLruCache<string, int> _albumTrackCountCache = new(maxCapacity: 500, comparer: StringComparer.OrdinalIgnoreCase);
     private readonly BoundedLruCache<string, string> _atvCounterpartCache = new(maxCapacity: 500, comparer: StringComparer.Ordinal);
+    private readonly BoundedLruCache<string, string> _officialOmvCounterpartCache = new(maxCapacity: 500, comparer: StringComparer.Ordinal);
+    private readonly BoundedLruCache<string, OfficialMusicVideoMetadata?> _officialVideoMetadataCache = new(maxCapacity: 250, comparer: StringComparer.OrdinalIgnoreCase);
     private readonly object _artistAvatarLoadLock = new();
     private readonly object _artistAudienceLoadLock = new();
     private readonly object _atvCounterpartLoadLock = new();
@@ -1094,9 +1097,10 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     /// <inheritdoc />
     public async Task<ArtistDetailProfile?> GetArtistProfileAsync(
         string artistName,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? explicitBrowseId = null)
     {
-        if (string.IsNullOrWhiteSpace(artistName))
+        if (string.IsNullOrWhiteSpace(artistName) && string.IsNullOrWhiteSpace(explicitBrowseId))
         {
             return null;
         }
@@ -1109,8 +1113,17 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
 
         try
         {
-            // 1. Search YouTube Music with the Artists filter to resolve the official channel browseId (UC...) & square avatar
-            var (ucBrowseId, searchAvatarUri, officialArtistName) = await FindArtistBrowseIdAndAvatarAsync(primaryArtist, cancellationToken).ConfigureAwait(false);
+            string? ucBrowseId = NormalizeExplicitArtistBrowseId(explicitBrowseId);
+            string? searchAvatarUri = null;
+            string? officialArtistName = null;
+
+            if (string.IsNullOrWhiteSpace(ucBrowseId))
+            {
+                // 1. Search YouTube Music with the Artists filter to resolve the official channel browseId (UC...) & square avatar
+                (ucBrowseId, searchAvatarUri, officialArtistName) =
+                    await FindArtistBrowseIdAndAvatarAsync(primaryArtist, cancellationToken).ConfigureAwait(false);
+            }
+
             if (string.IsNullOrWhiteSpace(ucBrowseId))
             {
                 return null;
@@ -1419,107 +1432,81 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         }
     }
 
+    private static string? NormalizeExplicitArtistBrowseId(string? rawBrowseId)
+    {
+        if (string.IsNullOrWhiteSpace(rawBrowseId))
+        {
+            return null;
+        }
+
+        string clean = rawBrowseId.Trim();
+        if (clean.StartsWith("ytm_sim_", StringComparison.OrdinalIgnoreCase))
+        {
+            clean = clean[8..];
+        }
+        else if (clean.StartsWith("ytm_artist_", StringComparison.OrdinalIgnoreCase))
+        {
+            clean = clean[11..];
+        }
+
+        if (clean.StartsWith("MPLAUC", StringComparison.Ordinal))
+        {
+            clean = clean[4..];
+        }
+
+        return clean.StartsWith("UC", StringComparison.Ordinal) && clean.Length >= 10 ? clean : null;
+    }
+
     private async Task<(string? BrowseId, string? AvatarUri, string? ArtistName)> FindArtistBrowseIdAndAvatarAsync(
         string artistName,
         CancellationToken cancellationToken)
     {
-        var bodyDict = new Dictionary<string, object?>
+        var payload = new Dictionary<string, object?>
         {
-            ["context"] = new Dictionary<string, object?>
-            {
-                ["client"] = new Dictionary<string, object?>
-                {
-                    ["clientName"] = "WEB_REMIX",
-                    ["clientVersion"] = "1.20250219.01.00",
-                    ["hl"] = "en",
-                    ["gl"] = "US"
-                }
-            },
+            ["context"] = BuildWebRemixContext(),
             ["query"] = artistName,
             ["params"] = YtMusicArtistsFilterParams
         };
 
-        string jsonPayload = JsonSerializer.Serialize(bodyDict);
-        using var request = new HttpRequestMessage(HttpMethod.Post, YtMusicSearchEndpoint)
-        {
-            Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json")
-        };
-
-        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
-        request.Headers.TryAddWithoutValidation("Origin", "https://music.youtube.com");
-        request.Headers.TryAddWithoutValidation("Referer", "https://music.youtube.com/");
-
-        using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        using var doc = await ExecuteInnerTubePostDocAsync(
+            YtMusicSearchEndpoint,
+            payload,
+            includeAuthHeaders: true,
+            cancellationToken).ConfigureAwait(false);
+        if (doc is null)
         {
             return (null, null, null);
         }
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        var candidates = new List<(string BrowseId, string AvatarUri, string Name)>();
-        CollectArtistSearchRenderersRecursive(doc.RootElement, candidates);
+        var candidates = new List<ArtistItem>(12);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool cacheUpdated = false;
+        ExtractSearchArtistsRecursive(doc.RootElement, candidates, seen, 12, ref cacheUpdated);
 
         if (candidates.Count == 0)
         {
             return (null, null, null);
         }
 
-        var exact = candidates.FirstOrDefault(c => string.Equals(c.Name, artistName, StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(exact.BrowseId))
+        string normTarget = NormalizeMatchText(artistName);
+        foreach (var cand in candidates)
         {
-            return (exact.BrowseId, exact.AvatarUri, exact.Name);
-        }
-
-        var first = candidates[0];
-        return (first.BrowseId, first.AvatarUri, first.Name);
-    }
-
-    private static void CollectArtistSearchRenderersRecursive(
-        JsonElement element,
-        List<(string BrowseId, string AvatarUri, string Name)> results)
-    {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            if (element.TryGetProperty("musicResponsiveListItemRenderer", out var renderer))
+            string? ucId = cand.ExtractChannelBrowseId();
+            if (string.IsNullOrWhiteSpace(ucId))
             {
-                string? browseId = FindFirstPropertyString(renderer, "browseId");
-                if (!string.IsNullOrWhiteSpace(browseId) &&
-                    (browseId.StartsWith("UC", StringComparison.Ordinal) || browseId.StartsWith("MPLAUC", StringComparison.Ordinal)))
-                {
-                    if (browseId.StartsWith("MPLA", StringComparison.Ordinal))
-                    {
-                        browseId = browseId["MPLA".Length..];
-                    }
-
-                    string avatar = ExtractHighResThumbnailUrl(renderer);
-                    string name = string.Empty;
-                    if (renderer.TryGetProperty("flexColumns", out var flexCols) &&
-                        flexCols.ValueKind == JsonValueKind.Array &&
-                        flexCols.GetArrayLength() > 0)
-                    {
-                        name = ExtractRunsText(flexCols[0]);
-                    }
-
-                    results.Add((browseId, avatar, name));
-                }
-
-                return;
+                continue;
             }
 
-            foreach (var prop in element.EnumerateObject())
+            if (string.Equals(cand.Name.Trim(), artistName.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(normTarget) &&
+                 string.Equals(NormalizeMatchText(cand.Name), normTarget, StringComparison.Ordinal)))
             {
-                CollectArtistSearchRenderersRecursive(prop.Value, results);
+                return (ucId, cand.AvatarUri, cand.Name.Trim());
             }
         }
-        else if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-            {
-                CollectArtistSearchRenderersRecursive(item, results);
-            }
-        }
+
+        // Never blindly redirect to candidates[0] (e.g. "Sheena" -> "Sheena Ringo") when no exact artist match exists.
+        return (null, null, null);
     }
 
     private async Task<List<TrackItem>> FetchArtistTopSongsPlaylistAsync(
@@ -1599,10 +1586,25 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         string defaultArtist,
         uint trackNumber)
     {
+        string? rawPlaylistVideoId = null;
+        if (renderer.TryGetProperty("playlistItemData", out var pid) &&
+            pid.TryGetProperty("videoId", out var vidProp))
+        {
+            rawPlaylistVideoId = vidProp.GetString();
+        }
+
         string? videoId = ExtractPreferredAudioVideoId(renderer);
         if (string.IsNullOrWhiteSpace(videoId))
         {
             return null;
+        }
+
+        string? officialVideoId = null;
+        if (!string.IsNullOrWhiteSpace(rawPlaylistVideoId) &&
+            !string.Equals(rawPlaylistVideoId, videoId, StringComparison.Ordinal) &&
+            string.Equals(ExtractMusicVideoType(renderer), "MUSIC_VIDEO_TYPE_OMV", StringComparison.OrdinalIgnoreCase))
+        {
+            officialVideoId = rawPlaylistVideoId;
         }
 
         if (!renderer.TryGetProperty("flexColumns", out var flexCols) ||
@@ -1698,6 +1700,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         {
             Id = $"ytm_{videoId}",
             YouTubeVideoId = videoId,
+            OfficialVideoId = officialVideoId ?? string.Empty,
             Title = title,
             Artist = artist,
             Album = album,
@@ -1811,6 +1814,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                     similarArtists.Add(new ArtistItem
                     {
                         Id = !string.IsNullOrWhiteSpace(browseId) ? browseId : $"ytm_sim_{title}",
+                        BrowseId = browseId ?? string.Empty,
                         Name = title,
                         AvatarUri = coverUri,
                         Genre = !string.IsNullOrWhiteSpace(subtitle) ? subtitle : "Similar Artist",
@@ -2435,6 +2439,14 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             return null;
         }
 
+        string? officialVideoId = null;
+        if (!string.IsNullOrWhiteSpace(rawPlaylistVideoId) &&
+            !string.Equals(rawPlaylistVideoId, videoId, StringComparison.Ordinal) &&
+            string.Equals(ExtractMusicVideoType(renderer), "MUSIC_VIDEO_TYPE_OMV", StringComparison.OrdinalIgnoreCase))
+        {
+            officialVideoId = rawPlaylistVideoId;
+        }
+
         if (!renderer.TryGetProperty("flexColumns", out var flexCols) ||
             flexCols.ValueKind != JsonValueKind.Array ||
             flexCols.GetArrayLength() < 1)
@@ -2496,6 +2508,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         {
             Id = $"ytm_{videoId}",
             YouTubeVideoId = videoId,
+            OfficialVideoId = officialVideoId ?? string.Empty,
             Title = title,
             Artist = artist,
             Album = albumTitle,
@@ -2525,7 +2538,11 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         string? Cookie,
         long? ContentLength,
         bool AllowChunkedRangeRetry,
-        DateTimeOffset ExpiresAt);
+        DateTimeOffset ExpiresAt,
+        string Codec = "AAC",
+        int BitrateKbps = 0,
+        int SampleRateHz = 0,
+        int ChannelCount = 2);
 
     private sealed record PlayerClientSpec(
         string ClientName,
@@ -2550,7 +2567,12 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         string Url,
         string Sp = "",
         string Signature = "",
-        long? ContentLength = null);
+        long? ContentLength = null,
+        string MimeType = "",
+        string Codec = "AAC",
+        int BitrateBps = 0,
+        int SampleRateHz = 0,
+        int ChannelCount = 2);
 
     private static List<(PlayerClientSpec Spec, bool UseAuth)> BuildStreamPlayerSpecs(bool isSignedIn)
     {
@@ -2729,6 +2751,20 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         string videoId,
         CancellationToken cancellationToken = default)
     {
+        var resolved = await ResolveAudioStreamWithMetadataAsync(
+            videoId,
+            StreamingAudioQuality.High160,
+            cancellationToken).ConfigureAwait(false);
+        return resolved?.PlaybackUri;
+    }
+
+    /// <inheritdoc />
+    public async Task<ResolvedPlaybackStream?> ResolveAudioStreamWithMetadataAsync(
+        string videoId,
+        StreamingAudioQuality requestedQuality,
+        CancellationToken cancellationToken = default,
+        bool resolveCanonicalAtv = true)
+    {
         if (string.IsNullOrWhiteSpace(videoId))
         {
             return null;
@@ -2741,7 +2777,14 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             return null;
         }
 
-        TraceStream($"ResolveAudioStreamUriAsync start raw/clean='{videoId}' isAuth={IsAuthenticated} expired={IsSessionExpired} hasDataSync={!string.IsNullOrWhiteSpace(_dataSyncId)}");
+        StreamingAudioQuality effectiveYtQuality = requestedQuality == StreamingAudioQuality.FlacLossless
+            ? StreamingAudioQuality.High160
+            : requestedQuality;
+        string tierSuffix = StreamingQualitySelector.GetCacheTierSuffix(effectiveYtQuality);
+        string variantSuffix = resolveCanonicalAtv ? tierSuffix : $"omv_{tierSuffix}";
+        string streamCacheKey = $"{videoId}:{variantSuffix}";
+
+        TraceStream($"ResolveAudioStreamWithMetadataAsync start raw/clean='{videoId}' quality={effectiveYtQuality} canonicalAtv={resolveCanonicalAtv} isAuth={IsAuthenticated} expired={IsSessionExpired}");
 
         // Validate saved session / sync account metadata if not yet checked this run
         if (IsAuthenticated && !_triedAccountMetaSync)
@@ -2750,25 +2793,38 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             TraceStream($"Post-sync account meta: isAuth={IsAuthenticated} expired={IsSessionExpired} label='{ConnectedAccountLabel}' hasDataSync={!string.IsNullOrWhiteSpace(_dataSyncId)}");
         }
 
-        // Ensure we always stream/cache the canonical studio audio song (MUSIC_VIDEO_TYPE_ATV) rather than an OMV/UGC music video
-        videoId = await ResolveCanonicalAtvVideoIdAsync(videoId, cancellationToken).ConfigureAwait(false);
-        TraceStream($"Canonical ATV videoId='{videoId}'");
-
-        // 1. Instant Cache: Check if already downloaded to disk (> 50 KB)
-        string targetFilePath = Path.Combine(_cacheDirectory, $"{videoId}.m4a");
-        if (TryGetValidCachedFile(targetFilePath, out string? existingPath))
+        if (resolveCanonicalAtv)
         {
-            return existingPath;
+            // Ensure standard Song playback streams/caches the canonical studio audio song (MUSIC_VIDEO_TYPE_ATV) rather than OMV/UGC
+            videoId = await ResolveCanonicalAtvVideoIdAsync(videoId, cancellationToken).ConfigureAwait(false);
+            streamCacheKey = $"{videoId}:{variantSuffix}";
+            TraceStream($"Canonical ATV videoId='{videoId}'");
         }
 
-        // 2. Acquire per-video download lock from fixed striped pool to deduplicate concurrent requests
-        var downloadLock = GetStripedLock($"audio:{videoId}", StringComparer.Ordinal);
+        // 1. Instant Cache: Check quality-scoped cache file first (and legacy .m4a for High160)
+        string targetFilePath = Path.Combine(_cacheDirectory, $"{videoId}_{variantSuffix}.m4a");
+        if (TryGetValidCachedFile(targetFilePath, out string? existingPath) && existingPath is not null)
+        {
+            return BuildResolvedYouTubeStreamFromFile(existingPath, requestedQuality, effectiveYtQuality, downloadedNetworkBytes: 0);
+        }
+
+        if (resolveCanonicalAtv && effectiveYtQuality == StreamingAudioQuality.High160)
+        {
+            string legacyPath = Path.Combine(_cacheDirectory, $"{videoId}.m4a");
+            if (TryGetValidCachedFile(legacyPath, out string? legacyExisting) && legacyExisting is not null)
+            {
+                return BuildResolvedYouTubeStreamFromFile(legacyExisting, requestedQuality, effectiveYtQuality, downloadedNetworkBytes: 0);
+            }
+        }
+
+        // 2. Acquire per-video+quality download lock from fixed striped pool to deduplicate concurrent requests
+        var downloadLock = GetStripedLock($"audio:{streamCacheKey}", StringComparer.Ordinal);
         await downloadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (TryGetValidCachedFile(targetFilePath, out existingPath))
+            if (TryGetValidCachedFile(targetFilePath, out existingPath) && existingPath is not null)
             {
-                return existingPath;
+                return BuildResolvedYouTubeStreamFromFile(existingPath, requestedQuality, effectiveYtQuality, downloadedNetworkBytes: 0);
             }
 
             // 3. Multi-client InnerTube resolver (uses authenticated web clients with user cookies for age-restricted/explicit tracks)
@@ -2776,7 +2832,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             for (int attempt = 0; attempt < 10; attempt++)
             {
                 ResolvedAudioStream? resolved = null;
-                if (_streamCache.TryGet(videoId, out var cachedStream) &&
+                if (_streamCache.TryGet(streamCacheKey, out var cachedStream) &&
                     cachedStream.ExpiresAt > DateTimeOffset.UtcNow &&
                     !failedClients.Contains(cachedStream.ClientName))
                 {
@@ -2784,10 +2840,10 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 }
                 else
                 {
-                    resolved = await ResolveDirectAudioStreamAsync(videoId, failedClients, cancellationToken).ConfigureAwait(false);
+                    resolved = await ResolveDirectAudioStreamAsync(videoId, failedClients, effectiveYtQuality, cancellationToken).ConfigureAwait(false);
                     if (resolved is not null)
                     {
-                        _streamCache.Set(videoId, resolved);
+                        _streamCache.Set(streamCacheKey, resolved);
                     }
                 }
 
@@ -2797,7 +2853,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                     break;
                 }
 
-                string tempFilePath = Path.Combine(_cacheDirectory, $"{videoId}_{Guid.NewGuid():N}.part");
+                string tempFilePath = Path.Combine(_cacheDirectory, $"{videoId}_{variantSuffix}_{Guid.NewGuid():N}.part");
                 try
                 {
                     string downloadUrl = BuildStreamDownloadUrl(resolved.Url, resolved.ContentLength);
@@ -2829,11 +2885,20 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                         }
 
                         File.Move(tempFilePath, targetFilePath, overwrite: true);
-                        TraceStream($"Cached audio ({resolved.ClientName}) for '{videoId}' size={new FileInfo(targetFilePath).Length}");
-                        return targetFilePath;
+                        long fileLen = new FileInfo(targetFilePath).Length;
+                        TraceStream($"Cached audio ({resolved.ClientName}) for '{videoId}' tier={tierSuffix} size={fileLen}");
+                        return BuildResolvedYouTubeStreamFromFile(
+                            targetFilePath,
+                            requestedQuality,
+                            effectiveYtQuality,
+                            downloadedNetworkBytes: fileLen,
+                            hintCodec: resolved.Codec,
+                            hintBitrateKbps: resolved.BitrateKbps,
+                            hintSampleRateHz: resolved.SampleRateHz,
+                            hintChannels: resolved.ChannelCount);
                     }
 
-                    _streamCache.Remove(videoId);
+                    _streamCache.Remove(streamCacheKey);
                     failedClients.Add(resolved.ClientName);
                 }
                 catch (OperationCanceledException)
@@ -2843,7 +2908,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 catch (Exception ex)
                 {
                     TraceStream($"Error downloading stream ({resolved.ClientName}) for '{videoId}': {ex.GetType().Name}: {ex.Message}");
-                    _streamCache.Remove(videoId);
+                    _streamCache.Remove(streamCacheKey);
                     failedClients.Add(resolved.ClientName);
                 }
                 finally
@@ -2860,13 +2925,21 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             {
                 _logger.LogInformation("Attempting YoutubeExplode fallback for '{VideoId}'...", videoId);
                 var manifest = await _youtubeClient.Videos.Streams.GetManifestAsync(videoId, cancellationToken).ConfigureAwait(false);
-                var audioStreamInfo = manifest.GetAudioOnlyStreams()
-                    .Where(s => s.Container == Container.Mp4)
-                    .GetWithHighestBitrate() ?? manifest.GetAudioOnlyStreams().GetWithHighestBitrate();
+                var allAudioStreams = manifest.GetAudioOnlyStreams().ToList();
+                int maxBps = StreamingQualitySelector.GetTargetMaxBitrateBps(effectiveYtQuality);
+                var audioStreamInfo = effectiveYtQuality is StreamingAudioQuality.Low64 or StreamingAudioQuality.Regular128
+                    ? allAudioStreams
+                        .Where(s => s.Bitrate.BitsPerSecond <= maxBps)
+                        .OrderByDescending(s => s.Container == Container.Mp4 ? 1 : 0)
+                        .ThenByDescending(s => s.Bitrate.BitsPerSecond)
+                        .FirstOrDefault()
+                      ?? allAudioStreams.OrderBy(s => s.Bitrate.BitsPerSecond).FirstOrDefault()
+                    : allAudioStreams.Where(s => s.Container == Container.Mp4).GetWithHighestBitrate()
+                      ?? allAudioStreams.GetWithHighestBitrate();
 
                 if (audioStreamInfo is not null)
                 {
-                    string tempFallback = Path.Combine(_cacheDirectory, $"{videoId}_{Guid.NewGuid():N}.part");
+                    string tempFallback = Path.Combine(_cacheDirectory, $"{videoId}_{tierSuffix}_{Guid.NewGuid():N}.part");
                     try
                     {
                         await _youtubeClient.Videos.Streams.DownloadAsync(audioStreamInfo, tempFallback, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -2879,7 +2952,14 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                             }
 
                             File.Move(tempFallback, targetFilePath, overwrite: true);
-                            return targetFilePath;
+                            long fileLen = new FileInfo(targetFilePath).Length;
+                            return BuildResolvedYouTubeStreamFromFile(
+                                targetFilePath,
+                                requestedQuality,
+                                effectiveYtQuality,
+                                downloadedNetworkBytes: fileLen,
+                                hintCodec: StreamingQualitySelector.ExtractCodecLabel(audioStreamInfo is IAudioStreamInfo aInfo ? aInfo.AudioCodec : "AAC"),
+                                hintBitrateKbps: (int)Math.Round(audioStreamInfo.Bitrate.KiloBitsPerSecond));
                         }
                     }
                     finally
@@ -2906,6 +2986,83 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         }
 
         return null;
+    }
+
+    private static ResolvedPlaybackStream BuildResolvedYouTubeStreamFromFile(
+        string filePath,
+        StreamingAudioQuality requestedQuality,
+        StreamingAudioQuality actualQuality,
+        long downloadedNetworkBytes,
+        string? hintCodec = null,
+        int hintBitrateKbps = 0,
+        int hintSampleRateHz = 0,
+        int hintChannels = 0)
+    {
+        long fileSize = 0;
+        string codec = string.IsNullOrWhiteSpace(hintCodec) ? "AAC" : hintCodec;
+        int bitrateKbps = hintBitrateKbps;
+        int sampleRateHz = hintSampleRateHz;
+        int channels = hintChannels;
+
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                fileSize = new FileInfo(filePath).Length;
+                using var tagFile = TagLib.File.Create(filePath);
+                var props = tagFile.Properties;
+                if (props is not null)
+                {
+                    if (props.AudioBitrate > 0) bitrateKbps = props.AudioBitrate;
+                    if (props.AudioSampleRate > 0) sampleRateHz = props.AudioSampleRate;
+                    if (props.AudioChannels > 0) channels = props.AudioChannels;
+                    var firstCodec = props.Codecs?.FirstOrDefault(c => c is not null);
+                    if (firstCodec is not null && !string.IsNullOrWhiteSpace(firstCodec.Description))
+                    {
+                        string desc = firstCodec.Description;
+                        if (desc.Contains("MPEG-4 Audio", StringComparison.OrdinalIgnoreCase) ||
+                            desc.Contains("AAC", StringComparison.OrdinalIgnoreCase))
+                        {
+                            codec = "AAC";
+                        }
+                        else if (desc.Contains("Opus", StringComparison.OrdinalIgnoreCase))
+                        {
+                            codec = "Opus";
+                        }
+                        else
+                        {
+                            codec = desc;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Keep format hints if TagLibSharp cannot inspect container
+        }
+
+        if (channels <= 0)
+        {
+            channels = 2;
+        }
+
+        return new ResolvedPlaybackStream(
+            PlaybackUri: filePath,
+            SourceKind: PlaybackSourceKind.YouTubeMusic,
+            ProviderLabel: "YouTube Music",
+            RequestedQuality: requestedQuality,
+            ActualQuality: actualQuality,
+            IsFlacFallback: false,
+            FallbackReason: null,
+            Codec: codec,
+            BitrateKbps: bitrateKbps,
+            SampleRateHz: sampleRateHz,
+            ChannelCount: channels,
+            BitDepth: 0,
+            FileSizeBytes: fileSize,
+            Isrc: string.Empty,
+            DownloadedNetworkBytes: downloadedNetworkBytes);
     }
 
     private bool TryGetValidCachedFile(string targetFilePath, out string? path)
@@ -2936,6 +3093,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     private async Task<ResolvedAudioStream?> ResolveDirectAudioStreamAsync(
         string canonicalVideoId,
         HashSet<string> skipClients,
+        StreamingAudioQuality requestedQuality,
         CancellationToken cancellationToken)
     {
         bool isSignedIn = IsAuthenticated;
@@ -2978,6 +3136,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 useAuth,
                 visitorData,
                 anonCookies,
+                requestedQuality,
                 cancellationToken).ConfigureAwait(false);
             sawAuthBlock |= blockedByAuth;
             if (resolved is not null)
@@ -3004,6 +3163,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         bool useAuth,
         string? visitorData,
         string? anonCookies,
+        StreamingAudioQuality requestedQuality,
         CancellationToken cancellationToken)
     {
         bool sawAuthBlock = false;
@@ -3182,7 +3342,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                     return (null, sawAuthBlock);
                 }
 
-                var candidate = PickBestAudioCandidate(streamingData);
+                var candidate = PickBestAudioCandidate(streamingData, requestedQuality);
                 if (candidate is null)
                 {
                     TraceStream($"{spec.ClientName} no audio candidate video={videoId}");
@@ -3222,7 +3382,11 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                     Cookie: downloadCookie,
                     ContentLength: candidate.ContentLength,
                     AllowChunkedRangeRetry: spec.AllowChunkedRangeRetry,
-                    ExpiresAt: DateTimeOffset.UtcNow.AddHours(4)), sawAuthBlock);
+                    ExpiresAt: DateTimeOffset.UtcNow.AddHours(4),
+                    Codec: candidate.Codec,
+                    BitrateKbps: candidate.BitrateBps > 0 ? (int)Math.Round(candidate.BitrateBps / 1000.0) : 0,
+                    SampleRateHz: candidate.SampleRateHz,
+                    ChannelCount: candidate.ChannelCount), sawAuthBlock);
             }
             catch (OperationCanceledException)
             {
@@ -3359,12 +3523,14 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         return $"{streamUrl}{sep}range=0-{rangeEnd}&hl=en";
     }
 
-    private static AudioFormatCandidate? PickBestAudioCandidate(JsonElement streamingData)
+    private static AudioFormatCandidate? PickBestAudioCandidate(
+        JsonElement streamingData,
+        StreamingAudioQuality requestedQuality = StreamingAudioQuality.High160)
     {
         if (streamingData.TryGetProperty("adaptiveFormats", out var adaptiveFormats) &&
             adaptiveFormats.ValueKind == JsonValueKind.Array)
         {
-            var best = PickBestAudioCandidateFromArray(adaptiveFormats, requireAudioMime: true);
+            var best = PickBestAudioCandidateFromArray(adaptiveFormats, requireAudioMime: true, requestedQuality);
             if (best is not null)
             {
                 return best;
@@ -3374,7 +3540,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         if (streamingData.TryGetProperty("formats", out var formats) &&
             formats.ValueKind == JsonValueKind.Array)
         {
-            var best = PickBestAudioCandidateFromArray(formats, requireAudioMime: false);
+            var best = PickBestAudioCandidateFromArray(formats, requireAudioMime: false, requestedQuality);
             if (best is not null)
             {
                 return best;
@@ -3384,12 +3550,12 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         return null;
     }
 
-    private static AudioFormatCandidate? PickBestAudioCandidateFromArray(JsonElement formatsArray, bool requireAudioMime)
+    private static AudioFormatCandidate? PickBestAudioCandidateFromArray(
+        JsonElement formatsArray,
+        bool requireAudioMime,
+        StreamingAudioQuality requestedQuality)
     {
-        AudioFormatCandidate? bestMp4 = null;
-        int bestMp4Bitrate = -1;
-        AudioFormatCandidate? fallback = null;
-        int fallbackBitrate = -1;
+        var descriptors = new List<YouTubeAudioFormatDescriptor>();
 
         foreach (var format in formatsArray.EnumerateArray())
         {
@@ -3418,23 +3584,48 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 ? br
                 : 0;
 
-            if (mimeType.StartsWith("audio/mp4", StringComparison.OrdinalIgnoreCase) ||
-                mimeType.StartsWith("video/mp4", StringComparison.OrdinalIgnoreCase))
+            int sampleRate = 0;
+            if (format.TryGetProperty("audioSampleRate", out var srProp))
             {
-                if (bitrate > bestMp4Bitrate)
+                if (srProp.ValueKind == JsonValueKind.String && int.TryParse(srProp.GetString(), out int srParsed))
                 {
-                    bestMp4Bitrate = bitrate;
-                    bestMp4 = candidate;
+                    sampleRate = srParsed;
+                }
+                else if (srProp.ValueKind == JsonValueKind.Number && srProp.TryGetInt32(out int srNum))
+                {
+                    sampleRate = srNum;
                 }
             }
-            else if (bitrate > fallbackBitrate)
-            {
-                fallbackBitrate = bitrate;
-                fallback = candidate;
-            }
+
+            int channels = format.TryGetProperty("audioChannels", out var chProp) && chProp.TryGetInt32(out int chVal) && chVal > 0
+                ? chVal
+                : 2;
+
+            descriptors.Add(new YouTubeAudioFormatDescriptor(
+                Url: candidate.Url,
+                Sp: candidate.Sp,
+                Signature: candidate.Signature,
+                MimeType: mimeType,
+                Codec: StreamingQualitySelector.ExtractCodecLabel(mimeType),
+                BitrateBps: bitrate,
+                SampleRateHz: sampleRate,
+                Channels: channels,
+                ContentLength: candidate.ContentLength));
         }
 
-        return bestMp4 ?? fallback;
+        var selected = StreamingQualitySelector.SelectBestFormat(descriptors, requestedQuality);
+        return selected is null
+            ? null
+            : new AudioFormatCandidate(
+                Url: selected.Url,
+                Sp: selected.Sp,
+                Signature: selected.Signature,
+                ContentLength: selected.ContentLength,
+                MimeType: selected.MimeType,
+                Codec: selected.Codec,
+                BitrateBps: selected.BitrateBps,
+                SampleRateHz: selected.SampleRateHz,
+                ChannelCount: selected.Channels);
     }
 
     private static AudioFormatCandidate? ParseAudioFormatCandidate(JsonElement format)
@@ -4139,6 +4330,60 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
         }
 
         return false;
+    }
+
+    private static async Task<JsonDocument?> ParseInnerTubeJsonStreamAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Most InnerTube JSON responses start with '{', while some begin with Google's ")]}'" XSSI prefix.
+            // Buffer into a compact UTF-8 MemoryStream only if we need to strip the 4-5 byte XSSI prefix,
+            // avoiding multi-MB UTF-16 string allocations on the Large Object Heap.
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms, 16384, cancellationToken).ConfigureAwait(false);
+            if (ms.Length == 0)
+            {
+                return null;
+            }
+
+            if (!ms.TryGetBuffer(out ArraySegment<byte> seg) || seg.Array is null)
+            {
+                seg = new ArraySegment<byte>(ms.ToArray());
+            }
+
+            int offset = seg.Offset;
+            int count = seg.Count;
+            if (count >= 4 &&
+                seg.Array[offset] == (byte)')' &&
+                seg.Array[offset + 1] == (byte)']' &&
+                seg.Array[offset + 2] == (byte)'\'' &&
+                seg.Array[offset + 3] == (byte)'}')
+            {
+                offset += 4;
+                count -= 4;
+                while (count > 0 && (seg.Array[offset] == (byte)'\r' || seg.Array[offset] == (byte)'\n'))
+                {
+                    offset++;
+                    count--;
+                }
+            }
+
+            if (count <= 0)
+            {
+                return null;
+            }
+
+            using var trimmedStream = new MemoryStream(seg.Array, offset, count, writable: false);
+            return await JsonDocument.ParseAsync(trimmedStream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static JsonDocument? ParseInnerTubeJson(string rawBody)
@@ -5612,8 +5857,8 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 return null;
             }
 
-            string raw = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            return ParseInnerTubeJson(raw);
+            using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            return await ParseInnerTubeJsonStreamAsync(responseStream, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -7486,7 +7731,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
             return result;
         }
 
-        var toDownload = new List<(string OriginalUri, string NormalizedUri, string Hash)>();
+        var toDownload = new List<(string OriginalUri, string NormalizedUri)>();
         foreach (string originalUri in distinctRemoteUris)
         {
             string normalizedUri = NormalizeHighResThumbnailUrl(originalUri, targetSizePx: 544);
@@ -7495,14 +7740,14 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                 continue;
             }
 
-            string hash = ComputeCoverCacheHash(normalizedUri);
-            if (TryGetCachedCoverFileUri(hash, out string? existingFileUri))
+            if (ArtworkCacheManager.TryGetCachedFileUri(normalizedUri, 544, out string? existingFileUri, out _) &&
+                !string.IsNullOrWhiteSpace(existingFileUri))
             {
                 result[originalUri] = existingFileUri!;
                 continue;
             }
 
-            toDownload.Add((originalUri, normalizedUri, hash));
+            toDownload.Add((originalUri, normalizedUri));
         }
 
         if (toDownload.Count == 0)
@@ -7527,14 +7772,14 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
 
             try
             {
-                string? localFileUri = await DownloadAndCacheCoverAsync(
+                var outcome = await ArtworkCacheManager.GetOrDownloadAsync(
                     item.NormalizedUri,
-                    item.Hash,
+                    minDimensionPx: 544,
                     budgetCts.Token).ConfigureAwait(false);
 
-                if (!string.IsNullOrWhiteSpace(localFileUri))
+                if (!string.IsNullOrWhiteSpace(outcome.LocalFileUri))
                 {
-                    result[item.OriginalUri] = localFileUri!;
+                    result[item.OriginalUri] = outcome.LocalFileUri!;
                 }
             }
             catch (OperationCanceledException)
@@ -8521,6 +8766,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                     results.Add(new ArtistItem
                     {
                         Id = artistId,
+                        BrowseId = browseId,
                         Name = name,
                         AvatarUri = avatarUrl,
                         Genre = !string.IsNullOrWhiteSpace(audience) ? audience : "YouTube Music",
@@ -8597,6 +8843,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
                         results.Add(new ArtistItem
                         {
                             Id = artistId,
+                            BrowseId = browseId,
                             Name = name,
                             AvatarUri = avatarUrl,
                             Genre = !string.IsNullOrWhiteSpace(audience) ? audience : "YouTube Music",
@@ -8788,19 +9035,28 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
 
         if (artists.Count > 0)
         {
-            var topArtist = artists[0];
-            string normArtist = NormalizeMatchText(topArtist.Name);
-            bool exactArtistMatch = !string.IsNullOrWhiteSpace(normalizedQuery) &&
-                                    (string.Equals(normArtist, normalizedQuery, StringComparison.Ordinal) ||
-                                     (normArtist.StartsWith(normalizedQuery, StringComparison.Ordinal) && normalizedQuery.Length >= 4));
-            if (exactArtistMatch || (songs.Count == 0 && albums.Count == 0))
+            ArtistItem? exactArtist = null;
+            if (!string.IsNullOrWhiteSpace(normalizedQuery))
             {
+                for (int i = 0; i < artists.Count; i++)
+                {
+                    if (string.Equals(NormalizeMatchText(artists[i].Name), normalizedQuery, StringComparison.Ordinal))
+                    {
+                        exactArtist = artists[i];
+                        break;
+                    }
+                }
+            }
+
+            if (exactArtist is not null || (songs.Count == 0 && albums.Count == 0))
+            {
+                var chosenArtist = exactArtist ?? artists[0];
                 return new SearchTopResultItem(
                     Kind: SearchTopResultKind.Artist,
-                    Title: topArtist.Name,
-                    Subtitle: topArtist.DisplaySubtitle,
-                    ArtworkUri: topArtist.AvatarUri,
-                    Artist: topArtist);
+                    Title: chosenArtist.Name,
+                    Subtitle: chosenArtist.DisplaySubtitle,
+                    ArtworkUri: chosenArtist.AvatarUri,
+                    Artist: chosenArtist);
             }
         }
 
@@ -9014,6 +9270,7 @@ public sealed partial class YouTubeMusicService : IYouTubeMusicService, IDisposa
     private static ArtistItem CloneArtistWithAvatar(ArtistItem artist, string avatarUri, string monthlyAudienceText) => new()
     {
         Id = artist.Id,
+        BrowseId = artist.BrowseId,
         Name = artist.Name,
         AvatarUri = avatarUri,
         Genre = !string.IsNullOrWhiteSpace(monthlyAudienceText) ? monthlyAudienceText : artist.Genre,

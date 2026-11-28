@@ -6,6 +6,7 @@ using Xperience.App.Services.Audio;
 using Xperience.Core.Abstractions;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
+using Xperience.Core.Domain.Models;
 using Xperience.Core.Playback;
 
 namespace Xperience.App.Services;
@@ -19,6 +20,8 @@ namespace Xperience.App.Services;
 public sealed class AudioPlayerService : IAudioPlayerService
 {
     private readonly IYouTubeMusicService _youTubeMusicService;
+    private readonly IMusicDownloadService _musicDownloadService;
+    private readonly IDataUsageService _dataUsageService;
     private readonly NightcoreDspEngine _dspEngine;
     private readonly ILogger<AudioPlayerService> _logger;
     private readonly MediaPlayer _mediaPlayer;
@@ -27,6 +30,14 @@ public sealed class AudioPlayerService : IAudioPlayerService
     private readonly ProgressiveQueueManager _progressiveQueueManager;
     private readonly object _loadCtsLock = new();
     private CancellationTokenSource? _activeLoadCts;
+    private readonly object _preloadLock = new();
+    private CancellationTokenSource? _preloadCts;
+    private (string TrackKey, StreamingAudioQuality Quality, ResolvedPlaybackStream Stream)? _preloadedNext;
+    private string? _preloadInFlightKey;
+    private PlaybackBehaviorSettings _behaviorSettings = new();
+    private TrackPlaybackInfo? _currentTrackPlaybackInfo;
+    private readonly ZeroVolumePauseCoordinator _zeroVolumeCoordinator = new();
+    private readonly WindowsSystemVolumeMonitor _systemVolumeMonitor;
     private readonly float[] _smoothedBands = new float[64];
     private float[] _trackBassEnvelope = [];
     private float[] _trackMidEnvelope = [];
@@ -38,7 +49,9 @@ public sealed class AudioPlayerService : IAudioPlayerService
     private volatile bool _isShuffleEnabled;
     private volatile bool _isLoadingMedia;
     private volatile bool _isCurrentTrackDeferred;
+    private volatile bool _isVideoAudioModeActive;
     private volatile bool _pendingAutoPlayAfterLoad;
+    private string? _activeAudioPlaybackUri;
     private long _pendingLoadSeekTicks = -1;
     private long _pendingMediaPlayerSeekTicks = -1;
     private double _volume = 0.85;
@@ -65,10 +78,53 @@ public sealed class AudioPlayerService : IAudioPlayerService
     public event EventHandler<string>? PlaybackErrorOccurred;
 
     /// <inheritdoc />
+    public event EventHandler<TrackPlaybackInfo?>? CurrentTrackPlaybackInfoChanged;
+
+    /// <inheritdoc />
+    public TrackPlaybackInfo? CurrentTrackPlaybackInfo => _currentTrackPlaybackInfo;
+
+    /// <inheritdoc />
+    public PlaybackBehaviorSettings BehaviorSettings
+    {
+        get => _behaviorSettings;
+        set
+        {
+            var next = value ?? new PlaybackBehaviorSettings();
+            bool qualityChanged = _behaviorSettings.OnlineQuality != next.OnlineQuality;
+            bool preloadDisabled = !next.GaplessPreloadEnabled;
+            _behaviorSettings = next;
+            _zeroVolumeCoordinator.IsEnabled = next.PauseAtZeroVolumeEnabled;
+            if (next.PauseAtZeroVolumeEnabled && _isPlaying)
+            {
+                var action = _zeroVolumeCoordinator.OnSystemVolumeChanged(
+                    _systemVolumeMonitor.CurrentMasterVolumeScalar,
+                    _systemVolumeMonitor.IsSystemMuted,
+                    isCurrentlyPlaying: _isPlaying);
+                if (action == ZeroVolumePauseAction.Pause)
+                {
+                    PausePlaybackCore(clearZeroVolumeFlag: false);
+                }
+            }
+
+            if (qualityChanged || preloadDisabled)
+            {
+                CancelAndClearNextPreload();
+            }
+            else if (next.GaplessPreloadEnabled && _isPlaying)
+            {
+                MaybeTriggerGaplessPreload();
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public TrackItem? CurrentTrack => _queueController.CurrentTrack;
 
     /// <inheritdoc />
     public bool IsPlaying => _isPlaying;
+
+    /// <inheritdoc />
+    public bool IsVideoAudioModeActive => _isVideoAudioModeActive;
 
     /// <inheritdoc />
     public double Volume
@@ -80,6 +136,12 @@ public sealed class AudioPlayerService : IAudioPlayerService
             _volume = clamped;
             _mediaPlayer.Volume = clamped;
             _dspEngine.SetMasterVolume(clamped, _isMuted);
+
+            if (!IsDisposed)
+            {
+                var action = _zeroVolumeCoordinator.OnAppVolumeChanged(clamped, _isPlaying);
+                ApplyZeroVolumeAction(action);
+            }
         }
     }
 
@@ -159,12 +221,24 @@ public sealed class AudioPlayerService : IAudioPlayerService
     /// </summary>
     public AudioPlayerService(
         IYouTubeMusicService youTubeMusicService,
+        IMusicDownloadService musicDownloadService,
+        IDataUsageService dataUsageService,
         NightcoreDspEngine dspEngine,
         ILogger<AudioPlayerService> logger)
     {
         _youTubeMusicService = youTubeMusicService;
+        _musicDownloadService = musicDownloadService;
+        _dataUsageService = dataUsageService;
         _dspEngine = dspEngine;
         _logger = logger;
+        _dataUsageService.DataLimitReached += OnDataLimitReached;
+        _systemVolumeMonitor = new WindowsSystemVolumeMonitor(logger);
+        _zeroVolumeCoordinator.OnAppVolumeChanged(_volume, isCurrentlyPlaying: false);
+        _zeroVolumeCoordinator.OnSystemVolumeChanged(
+            _systemVolumeMonitor.CurrentMasterVolumeScalar,
+            _systemVolumeMonitor.IsSystemMuted,
+            isCurrentlyPlaying: false);
+        _systemVolumeMonitor.SystemVolumeChanged += OnSystemMasterVolumeChanged;
         _mediaPlayer = new MediaPlayer
         {
             AudioCategory = MediaPlayerAudioCategory.Media,
@@ -219,6 +293,142 @@ public sealed class AudioPlayerService : IAudioPlayerService
         }
 
         var activeTrack = _queueController.SetQueue(tracks, startIndex);
+        if (_isShuffleEnabled && activeTrack is not null)
+        {
+            _queueController.ShuffleUpcoming();
+        }
+
+        await PrepareActivatedQueueTrackAsync(activeTrack, autoPlay, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task SetShuffledQueueAsync(
+        IReadOnlyList<TrackItem> canonicalTracks,
+        int? startCanonicalIndex = null,
+        bool autoPlay = true,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalTracks);
+
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        _isShuffleEnabled = true;
+        var activeTrack = _queueController.SetQueueShuffled(canonicalTracks, startCanonicalIndex);
+        await PrepareActivatedQueueTrackAsync(activeTrack, autoPlay, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public PersistedPlaybackSessionState? CapturePlaybackSessionSnapshot()
+    {
+        if (IsDisposed)
+        {
+            return null;
+        }
+
+        var (items, currentIdx, canonical) = _queueController.GetSessionSnapshot();
+        if (items.Count == 0 || currentIdx < 0 || currentIdx >= items.Count)
+        {
+            return null;
+        }
+
+        var current = items[currentIdx];
+        if (string.Equals(current.Id, "empty_state_track", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(current.Title))
+        {
+            return null;
+        }
+
+        const int maxTotal = 200;
+        const int maxHistoryBefore = 40;
+        int windowStart = Math.Max(0, currentIdx - maxHistoryBefore);
+        int windowCount = Math.Min(maxTotal, items.Count - windowStart);
+
+        var savedItems = new List<TrackItem>(windowCount);
+        for (int i = windowStart; i < windowStart + windowCount; i++)
+        {
+            var t = items[i];
+            if (t is not null && !string.Equals(t.Id, "empty_state_track", StringComparison.OrdinalIgnoreCase))
+            {
+                savedItems.Add(t);
+            }
+        }
+
+        if (savedItems.Count == 0)
+        {
+            return null;
+        }
+
+        int savedCurrentIdx = Math.Clamp(currentIdx - windowStart, 0, savedItems.Count - 1);
+        var savedCanonical = canonical.Count <= 250
+            ? canonical.Where(t => t is not null && !string.Equals(t.Id, "empty_state_track", StringComparison.OrdinalIgnoreCase)).ToList()
+            : savedItems.ToList();
+
+        TimeSpan livePos = _dspEngine.IsUsingAudioGraphForCurrentTrack && _isPlaying
+            ? _dspEngine.GraphPosition
+            : Position;
+        TimeSpan dur = Duration > TimeSpan.Zero ? Duration : current.Duration;
+        double durSec = Math.Max(0.0, dur.TotalSeconds);
+        double posSec = durSec > 0
+            ? Math.Clamp(livePos.TotalSeconds, 0.0, durSec)
+            : Math.Max(0.0, livePos.TotalSeconds);
+
+        return new PersistedPlaybackSessionState
+        {
+            QueueItems = savedItems,
+            CanonicalOrder = savedCanonical,
+            CurrentIndex = savedCurrentIdx,
+            PositionSeconds = posSec,
+            DurationSeconds = durSec,
+            IsShuffleEnabled = _isShuffleEnabled,
+            RepeatMode = RepeatMode,
+            Volume = _volume,
+            IsMuted = _isMuted,
+            SavedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+    }
+
+    /// <inheritdoc />
+    public bool RestorePlaybackSession(PersistedPlaybackSessionState session)
+    {
+        if (IsDisposed || session is null || session.QueueItems is null || session.QueueItems.Count == 0)
+        {
+            return false;
+        }
+
+        CancelAndClearNextPreload();
+        var activeTrack = _queueController.RestoreSession(session.QueueItems, session.CurrentIndex, session.CanonicalOrder);
+        if (activeTrack is null)
+        {
+            return false;
+        }
+
+        _isShuffleEnabled = session.IsShuffleEnabled;
+        Volatile.Write(ref _repeatMode, (int)session.RepeatMode);
+        double clampedVol = Math.Clamp(session.Volume, 0.0, 1.0);
+        _volume = clampedVol;
+        _isMuted = session.IsMuted;
+        _mediaPlayer.Volume = clampedVol;
+        _mediaPlayer.IsMuted = session.IsMuted;
+        _dspEngine.SetMasterVolume(clampedVol, session.IsMuted);
+
+        _progressiveQueueManager.OnQueueReplaced();
+        EmitQueueChanged();
+        EnterDeferredIdleState(
+            activeTrack,
+            TimeSpan.FromSeconds(Math.Max(0.0, session.PositionSeconds)),
+            TimeSpan.FromSeconds(Math.Max(0.0, session.DurationSeconds)));
+
+        return true;
+    }
+
+    private async Task PrepareActivatedQueueTrackAsync(
+        TrackItem? activeTrack,
+        bool autoPlay,
+        CancellationToken cancellationToken)
+    {
         _progressiveQueueManager.OnQueueReplaced();
         EmitQueueChanged();
 
@@ -231,36 +441,7 @@ public sealed class AudioPlayerService : IAudioPlayerService
 
         if (!autoPlay)
         {
-            // Defer decoder, AudioGraph, and YouTube WebView2 spin-up until user initiates playback or seeks
-            Interlocked.Increment(ref _activePlayRequestId);
-            CancelActiveLoadCts();
-            _isLoadingMedia = false;
-            _isPlaying = false;
-            _isCurrentTrackDeferred = true;
-            _pendingAutoPlayAfterLoad = false;
-            Interlocked.Exchange(ref _pendingLoadSeekTicks, -1L);
-            Interlocked.Exchange(ref _pendingMediaPlayerSeekTicks, -1L);
-            SetTelemetryInterval(Timeout.Infinite, Timeout.Infinite);
-            _dspEngine.ResetAndCleanupCurrentTrackNodes();
-            try
-            {
-                _mediaPlayer.Pause();
-                ReplaceMediaSource(_mediaPlayer, null);
-            }
-            catch
-            {
-                // Ignore transient pause/source reset state
-            }
-
-            Duration = activeTrack.Duration;
-            Position = TimeSpan.Zero;
-            _lastSessionPosition = TimeSpan.Zero;
-            _lastSessionTick = Stopwatch.GetTimestamp();
-            _trackSeed = StringComparer.OrdinalIgnoreCase.GetHashCode(activeTrack.Id ?? activeTrack.Title);
-
-            CurrentTrackChanged?.Invoke(this, activeTrack);
-            IsPlayingChanged?.Invoke(this, false);
-            PositionChanged?.Invoke(this, new PlaybackPositionEventArgs(Position, Duration));
+            EnterDeferredIdleState(activeTrack, TimeSpan.Zero, activeTrack.Duration);
             return;
         }
 
@@ -271,6 +452,46 @@ public sealed class AudioPlayerService : IAudioPlayerService
             autoPlay: true,
             triggerPrefetch: true,
             cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private void EnterDeferredIdleState(TrackItem activeTrack, TimeSpan initialPosition, TimeSpan initialDuration)
+    {
+        // Defer decoder, AudioGraph, and YouTube WebView2 spin-up until user initiates playback or seeks
+        Interlocked.Increment(ref _activePlayRequestId);
+        CancelActiveLoadCts();
+        _isLoadingMedia = false;
+        _isPlaying = false;
+        _isCurrentTrackDeferred = true;
+        _isVideoAudioModeActive = activeTrack.IsOfficialVideoItem;
+        _pendingAutoPlayAfterLoad = false;
+        Interlocked.Exchange(ref _pendingLoadSeekTicks, -1L);
+        Interlocked.Exchange(ref _pendingMediaPlayerSeekTicks, -1L);
+        SetTelemetryInterval(Timeout.Infinite, Timeout.Infinite);
+        _dspEngine.ResetAndCleanupCurrentTrackNodes();
+        try
+        {
+            _mediaPlayer.Pause();
+            ReplaceMediaSource(_mediaPlayer, null);
+        }
+        catch
+        {
+            // Ignore transient pause/source reset state
+        }
+
+        TimeSpan effectiveDur = initialDuration > TimeSpan.Zero ? initialDuration : activeTrack.Duration;
+        double clampedSec = effectiveDur > TimeSpan.Zero
+            ? Math.Clamp(initialPosition.TotalSeconds, 0.0, effectiveDur.TotalSeconds)
+            : Math.Max(0.0, initialPosition.TotalSeconds);
+
+        Duration = effectiveDur;
+        Position = TimeSpan.FromSeconds(clampedSec);
+        _lastSessionPosition = Position;
+        _lastSessionTick = Stopwatch.GetTimestamp();
+        _trackSeed = StringComparer.OrdinalIgnoreCase.GetHashCode(activeTrack.Id ?? activeTrack.Title);
+
+        CurrentTrackChanged?.Invoke(this, activeTrack);
+        IsPlayingChanged?.Invoke(this, false);
+        PositionChanged?.Invoke(this, new PlaybackPositionEventArgs(Position, Duration));
     }
 
     /// <inheritdoc />
@@ -442,6 +663,8 @@ public sealed class AudioPlayerService : IAudioPlayerService
         var loadCts = ReplaceActiveLoadCts(cancellationToken);
         var linkedToken = loadCts.Token;
         _isCurrentTrackDeferred = false;
+        _isVideoAudioModeActive = track.IsOfficialVideoItem;
+        _activeAudioPlaybackUri = null;
         _pendingAutoPlayAfterLoad = autoPlay;
         _isLoadingMedia = true;
         Interlocked.Exchange(
@@ -476,7 +699,6 @@ public sealed class AudioPlayerService : IAudioPlayerService
         _lastSessionPosition = Position;
         _lastSessionTick = Stopwatch.GetTimestamp();
         _trackSeed = StringComparer.OrdinalIgnoreCase.GetHashCode(track.Id ?? track.Title);
-        _ = Task.Run(() => BuildTrackAcousticEnvelope(track.AudioSourceUri));
 
         if (notifyTrackChanged)
         {
@@ -493,27 +715,80 @@ public sealed class AudioPlayerService : IAudioPlayerService
         try
         {
             string? playbackUri = track.AudioSourceUri;
+            ResolvedPlaybackStream? resolvedStream = null;
+            StreamingAudioQuality requestedQuality = _behaviorSettings.OnlineQuality;
 
             // Prioritize local / downloaded offline files over online streaming
             if (!string.IsNullOrWhiteSpace(track.LocalOfflineFilePath) && File.Exists(track.LocalOfflineFilePath))
             {
                 playbackUri = track.LocalOfflineFilePath;
+                resolvedStream = InspectLocalAudioFile(playbackUri, PlaybackSourceKind.DownloadedOffline, "Downloaded Offline", requestedQuality);
             }
             else if (!string.IsNullOrWhiteSpace(playbackUri) && File.Exists(playbackUri))
             {
                 // Already a valid local file path on disk
+                resolvedStream = InspectLocalAudioFile(playbackUri, PlaybackSourceKind.Local, "Local File", requestedQuality);
             }
             else if (!string.IsNullOrWhiteSpace(track.YouTubeVideoId) ||
                 (!string.IsNullOrWhiteSpace(playbackUri) && playbackUri.StartsWith("ytmusic://", StringComparison.OrdinalIgnoreCase)) ||
                 (!string.IsNullOrWhiteSpace(track.Id) && track.Id.StartsWith("ytm_", StringComparison.OrdinalIgnoreCase)))
             {
-                string videoId = !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
-                    ? track.YouTubeVideoId
-                    : !string.IsNullOrWhiteSpace(playbackUri) && playbackUri.StartsWith("ytmusic://", StringComparison.OrdinalIgnoreCase)
-                        ? playbackUri
-                        : TrackDeduplicationHelper.StripYtmPrefix(track.Id);
+                // Enforce Data Usage Limit for online streams (local/downloaded offline files above are never blocked)
+                if (_dataUsageService.IsOnlineStreamingBlocked())
+                {
+                    _isLoadingMedia = false;
+                    _isPlaying = false;
+                    SetTelemetryInterval(Timeout.Infinite, Timeout.Infinite);
+                    IsPlayingChanged?.Invoke(this, false);
+                    string limitMsg = $"Data usage limit ({TrackPlaybackInfo.FormatByteSize(_dataUsageService.Settings.WifiLimitBytes)}) reached. Online playback paused.";
+                    PlaybackErrorOccurred?.Invoke(this, limitMsg);
+                    return;
+                }
 
-                playbackUri = await _youTubeMusicService.ResolveAudioStreamUriAsync(videoId, linkedToken).ConfigureAwait(false);
+                // Check gapless preloaded next-track cache first for instant zero-gap handoff
+                string trackPreloadKey = BuildPreloadTrackKey(track);
+                if (TryConsumePreloadedStream(trackPreloadKey, requestedQuality, out var preloaded) && preloaded is not null)
+                {
+                    resolvedStream = preloaded;
+                    playbackUri = preloaded.PlaybackUri;
+                }
+                else
+                {
+                    resolvedStream = await ResolveOnlineStreamForTrackAsync(track, requestedQuality, linkedToken).ConfigureAwait(false);
+                    playbackUri = resolvedStream?.PlaybackUri;
+                }
+
+                if (resolvedStream is not null)
+                {
+                    if (track.IsOfficialVideoItem && resolvedStream.SourceKind == PlaybackSourceKind.YouTubeMusic)
+                    {
+                        resolvedStream = resolvedStream with
+                        {
+                            SourceKind = PlaybackSourceKind.YouTubeVideo,
+                            ProviderLabel = "YouTube Video"
+                        };
+                    }
+
+                    string qualityLabel = resolvedStream.FormatQualityLabel();
+                    string sourceLabel = FormatSourceDisplayLabel(resolvedStream.SourceKind, resolvedStream.ProviderLabel, resolvedStream.IsFlacFallback);
+                    if (resolvedStream.DownloadedNetworkBytes > 0)
+                    {
+                        _ = _dataUsageService.RecordUsageAsync(
+                            track,
+                            DataUsageCategory.Audio,
+                            resolvedStream.DownloadedNetworkBytes,
+                            qualityLabel,
+                            sourceLabel,
+                            DataUsageNetworkType.Wifi);
+                    }
+
+                    _ = _dataUsageService.RecordStreamPlayAsync(track, qualityLabel, sourceLabel);
+                }
+            }
+
+            if (resolvedStream is not null)
+            {
+                UpdateCurrentTrackPlaybackInfo(track, resolvedStream);
             }
 
             // If disposed or user selected another track while this stream was resolving, abort this superseded request
@@ -529,7 +804,20 @@ public sealed class AudioPlayerService : IAudioPlayerService
             if (!string.IsNullOrWhiteSpace(playbackUri) && File.Exists(playbackUri))
             {
                 var fullPath = Path.GetFullPath(playbackUri);
-                _ = Task.Run(() => BuildTrackAcousticEnvelope(fullPath));
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(500, linkedToken).ConfigureAwait(false);
+                        if (!linkedToken.IsCancellationRequested && requestId == Volatile.Read(ref _activePlayRequestId))
+                        {
+                            BuildTrackAcousticEnvelope(fullPath);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }, CancellationToken.None);
 
                 loadedInAudioGraph = await _dspEngine.TryLoadTrackFileAsync(fullPath, linkedToken, openSeek).ConfigureAwait(false);
                 if (IsDisposed || requestId != Volatile.Read(ref _activePlayRequestId) || linkedToken.IsCancellationRequested)
@@ -537,6 +825,8 @@ public sealed class AudioPlayerService : IAudioPlayerService
                     _dspEngine.ResetAndCleanupCurrentTrackNodes();
                     return;
                 }
+
+                _activeAudioPlaybackUri = fullPath;
 
                 if (loadedInAudioGraph)
                 {
@@ -639,8 +929,10 @@ public sealed class AudioPlayerService : IAudioPlayerService
                 }
 
                 _isPlaying = true;
+                _zeroVolumeCoordinator.OnManualPlayPauseOrTrackChange();
                 _lastSessionTick = Stopwatch.GetTimestamp();
                 SetTelemetryInterval(25, 28);
+                MaybeTriggerGaplessPreload();
             }
             else
             {
@@ -743,6 +1035,10 @@ public sealed class AudioPlayerService : IAudioPlayerService
         }
 
         QueueChanged?.Invoke(this, _queueController.GetUpcomingQueue());
+        if (_isPlaying && _behaviorSettings.GaplessPreloadEnabled)
+        {
+            MaybeTriggerGaplessPreload();
+        }
     }
 
     private void SetTelemetryInterval(int dueTimeMs, int periodMs)
@@ -905,6 +1201,7 @@ public sealed class AudioPlayerService : IAudioPlayerService
 
         try
         {
+            _zeroVolumeCoordinator.OnManualPlayPauseOrTrackChange();
             if (_isPlaying)
             {
                 _progressiveQueueManager.CancelEndAdvance();
@@ -1174,6 +1471,15 @@ public sealed class AudioPlayerService : IAudioPlayerService
 
             _progressiveQueueManager.MaybePrefetch(RepeatMode);
         }
+        else
+        {
+            if (_queueController.UnshuffleUpcoming())
+            {
+                EmitQueueChanged();
+            }
+
+            _progressiveQueueManager.MaybePrefetch(RepeatMode);
+        }
 
         return nextState;
     }
@@ -1270,6 +1576,247 @@ public sealed class AudioPlayerService : IAudioPlayerService
             autoPlay: true,
             triggerPrefetch: true,
             cancellationToken: CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> SwitchTrackAudioVariantAsync(
+        string? officialVideoId,
+        bool useVideoAudio,
+        Func<string?, string?, TimeSpan, TimeSpan>? resolveTargetPosition = null,
+        CancellationToken cancellationToken = default)
+    {
+        var track = CurrentTrack;
+        if (IsDisposed || track is null || track.Id == "empty_state_track")
+        {
+            return false;
+        }
+
+        if (_isVideoAudioModeActive == useVideoAudio)
+        {
+            return true;
+        }
+
+        int requestId = Volatile.Read(ref _activePlayRequestId);
+        bool wasPlaying = _isPlaying;
+        TimeSpan currentPos = Position;
+        StreamingAudioQuality requestedQuality = _behaviorSettings.OnlineQuality;
+
+        string? previousSongPath = !_isVideoAudioModeActive ? _activeAudioPlaybackUri : null;
+        string? targetUri = null;
+        ResolvedPlaybackStream? resolvedStream = null;
+
+        try
+        {
+            if (useVideoAudio)
+            {
+                string vidId = !string.IsNullOrWhiteSpace(officialVideoId)
+                    ? officialVideoId
+                    : (!string.IsNullOrWhiteSpace(track.OfficialVideoId) ? track.OfficialVideoId : track.YouTubeVideoId);
+                if (string.IsNullOrWhiteSpace(vidId))
+                {
+                    return false;
+                }
+
+                resolvedStream = await _youTubeMusicService.ResolveAudioStreamWithMetadataAsync(
+                    vidId,
+                    requestedQuality,
+                    cancellationToken,
+                    resolveCanonicalAtv: false).ConfigureAwait(false);
+                if (resolvedStream is null || string.IsNullOrWhiteSpace(resolvedStream.PlaybackUri))
+                {
+                    return false;
+                }
+
+                resolvedStream = resolvedStream with
+                {
+                    SourceKind = PlaybackSourceKind.YouTubeVideo,
+                    ProviderLabel = "YouTube Video"
+                };
+                targetUri = resolvedStream.PlaybackUri;
+
+                if (resolvedStream.DownloadedNetworkBytes > 0)
+                {
+                    _ = _dataUsageService.RecordUsageAsync(
+                        track,
+                        DataUsageCategory.Audio,
+                        resolvedStream.DownloadedNetworkBytes,
+                        resolvedStream.FormatQualityLabel(),
+                        "YouTube Video",
+                        DataUsageNetworkType.Wifi);
+                }
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(track.LocalOfflineFilePath) && File.Exists(track.LocalOfflineFilePath))
+                {
+                    targetUri = track.LocalOfflineFilePath;
+                    resolvedStream = InspectLocalAudioFile(targetUri, PlaybackSourceKind.DownloadedOffline, "Downloaded Offline", requestedQuality);
+                }
+                else if (!string.IsNullOrWhiteSpace(track.AudioSourceUri) && File.Exists(track.AudioSourceUri))
+                {
+                    targetUri = track.AudioSourceUri;
+                    resolvedStream = InspectLocalAudioFile(targetUri, PlaybackSourceKind.Local, "Local File", requestedQuality);
+                }
+                else
+                {
+                    var songTrack = track.IsOfficialVideoItem
+                        ? new TrackItem
+                        {
+                            Id = track.Id,
+                            Title = track.Title,
+                            Artist = track.Artist,
+                            Album = track.Album,
+                            Duration = track.Duration,
+                            CoverArtUri = track.CoverArtUri,
+                            AudioSourceUri = track.AudioSourceUri,
+                            YouTubeVideoId = track.YouTubeVideoId,
+                            SourceType = track.SourceType,
+                            IsOfficialVideoItem = false
+                        }
+                        : track;
+
+                    resolvedStream = await ResolveOnlineStreamForTrackAsync(songTrack, requestedQuality, cancellationToken)
+                        .ConfigureAwait(false);
+                    targetUri = resolvedStream?.PlaybackUri;
+                    if (resolvedStream is not null && resolvedStream.DownloadedNetworkBytes > 0)
+                    {
+                        _ = _dataUsageService.RecordUsageAsync(
+                            track,
+                            DataUsageCategory.Audio,
+                            resolvedStream.DownloadedNetworkBytes,
+                            resolvedStream.FormatQualityLabel(),
+                            FormatSourceDisplayLabel(resolvedStream.SourceKind, resolvedStream.ProviderLabel, resolvedStream.IsFlacFallback),
+                            DataUsageNetworkType.Wifi);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(targetUri))
+                {
+                    return false;
+                }
+            }
+
+            if (IsDisposed || requestId != Volatile.Read(ref _activePlayRequestId) || cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            string? songPathForAlign = useVideoAudio ? previousSongPath : targetUri;
+            string? videoPathForAlign = useVideoAudio ? targetUri : _activeAudioPlaybackUri;
+            TimeSpan mappedPos = resolveTargetPosition is not null
+                ? resolveTargetPosition(songPathForAlign, videoPathForAlign, currentPos)
+                : currentPos;
+            if (mappedPos < TimeSpan.Zero)
+            {
+                mappedPos = TimeSpan.Zero;
+            }
+
+            _isLoadingMedia = true;
+            _dspEngine.PauseGraphPlayback();
+            try { _mediaPlayer.Pause(); ReplaceMediaSource(_mediaPlayer, null); } catch { }
+
+            bool loadedInAudioGraph = false;
+            if (File.Exists(targetUri))
+            {
+                string fullPath = Path.GetFullPath(targetUri);
+                loadedInAudioGraph = await _dspEngine.TryLoadTrackFileAsync(fullPath, cancellationToken, mappedPos)
+                    .ConfigureAwait(false);
+                if (IsDisposed || requestId != Volatile.Read(ref _activePlayRequestId) || cancellationToken.IsCancellationRequested)
+                {
+                    _dspEngine.ResetAndCleanupCurrentTrackNodes();
+                    return false;
+                }
+
+                _activeAudioPlaybackUri = fullPath;
+                if (loadedInAudioGraph)
+                {
+                    UpdateNaturalDuration(_dspEngine.GraphDuration);
+                }
+                else
+                {
+                    Interlocked.Exchange(ref _pendingMediaPlayerSeekTicks, mappedPos.Ticks);
+                    ReplaceMediaSource(_mediaPlayer, MediaSource.CreateFromUri(new Uri(fullPath)));
+                }
+            }
+            else if (Uri.TryCreate(targetUri, UriKind.Absolute, out var uri))
+            {
+                loadedInAudioGraph = await _dspEngine.TryLoadTrackFileAsync(uri.AbsoluteUri, cancellationToken, mappedPos)
+                    .ConfigureAwait(false);
+                if (IsDisposed || requestId != Volatile.Read(ref _activePlayRequestId) || cancellationToken.IsCancellationRequested)
+                {
+                    _dspEngine.ResetAndCleanupCurrentTrackNodes();
+                    return false;
+                }
+
+                _activeAudioPlaybackUri = uri.AbsoluteUri;
+                if (loadedInAudioGraph)
+                {
+                    UpdateNaturalDuration(_dspEngine.GraphDuration);
+                }
+                else
+                {
+                    Interlocked.Exchange(ref _pendingMediaPlayerSeekTicks, mappedPos.Ticks);
+                    ReplaceMediaSource(_mediaPlayer, MediaSource.CreateFromUri(uri));
+                }
+            }
+            else
+            {
+                return false;
+            }
+
+            _isVideoAudioModeActive = useVideoAudio;
+            if (resolvedStream is not null)
+            {
+                UpdateCurrentTrackPlaybackInfo(track, resolvedStream);
+            }
+
+            var actualPos = loadedInAudioGraph ? _dspEngine.GraphPosition : mappedPos;
+            if (Duration > TimeSpan.Zero && actualPos > Duration)
+            {
+                actualPos = Duration;
+            }
+
+            Position = actualPos;
+            _lastSessionPosition = actualPos;
+            _lastSessionTick = Stopwatch.GetTimestamp();
+
+            if (wasPlaying)
+            {
+                if (loadedInAudioGraph)
+                {
+                    _dspEngine.StartGraphPlayback();
+                }
+                else
+                {
+                    _mediaPlayer.Play();
+                }
+
+                _isPlaying = true;
+                SetTelemetryInterval(25, 28);
+            }
+            else
+            {
+                _isPlaying = false;
+                SetTelemetryInterval(Timeout.Infinite, Timeout.Infinite);
+            }
+
+            PositionChanged?.Invoke(this, new PlaybackPositionEventArgs(Position, Duration));
+            IsPlayingChanged?.Invoke(this, _isPlaying);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "SwitchTrackAudioVariantAsync failed (useVideoAudio={UseVideo}).", useVideoAudio);
+            return false;
+        }
+        finally
+        {
+            _isLoadingMedia = false;
+        }
     }
 
     /// <inheritdoc />
@@ -1411,6 +1958,7 @@ public sealed class AudioPlayerService : IAudioPlayerService
     private void BuildTrackAcousticEnvelope(string? audioFilePath)
     {
         const int slices = 1024;
+        const int samplePoints = 128;
         var bass = new float[slices];
         var mid = new float[slices];
         var treble = new float[slices];
@@ -1426,42 +1974,49 @@ public sealed class AudioPlayerService : IAudioPlayerService
                 long dataLength = Math.Max(1024, length - dataStart);
                 byte[] sampleBuf = new byte[256];
 
-                for (int s = 0; s < slices; s++)
+                for (int p = 0; p < samplePoints; p++)
                 {
-                    long offset = dataStart + ((dataLength - sampleBuf.Length) * s / slices);
+                    long offset = dataStart + ((dataLength - sampleBuf.Length) * p / samplePoints);
                     fs.Seek(offset, SeekOrigin.Begin);
                     int read = fs.Read(sampleBuf, 0, sampleBuf.Length);
-                    if (read <= 4)
+                    float bVal = 0.55f;
+                    float mVal = 0.50f;
+                    float tVal = 0.42f;
+                    if (read > 4)
                     {
-                        bass[s] = 0.55f;
-                        mid[s] = 0.50f;
-                        treble[s] = 0.42f;
-                        continue;
-                    }
+                        float lowAcc = 0f;
+                        float midAcc = 0f;
+                        float highAcc = 0f;
+                        int prev = sampleBuf[0] - 128;
 
-                    float lowAcc = 0f;
-                    float midAcc = 0f;
-                    float highAcc = 0f;
-                    int prev = sampleBuf[0] - 128;
-
-                    for (int k = 1; k < read; k++)
-                    {
-                        int curr = sampleBuf[k] - 128;
-                        int diff = Math.Abs(curr - prev);
-                        lowAcc += Math.Abs(curr) / 128f;
-                        midAcc += diff / 192f;
-                        if (k > 1)
+                        for (int k = 1; k < read; k++)
                         {
-                            int prev2 = sampleBuf[k - 2] - 128;
-                            highAcc += Math.Abs(curr - (2 * prev) + prev2) / 256f;
+                            int curr = sampleBuf[k] - 128;
+                            int diff = Math.Abs(curr - prev);
+                            lowAcc += Math.Abs(curr) / 128f;
+                            midAcc += diff / 192f;
+                            if (k > 1)
+                            {
+                                int prev2 = sampleBuf[k - 2] - 128;
+                                highAcc += Math.Abs(curr - (2 * prev) + prev2) / 256f;
+                            }
+
+                            prev = curr;
                         }
 
-                        prev = curr;
+                        bVal = Math.Clamp(0.28f + ((lowAcc / read) * 1.15f), 0.18f, 1.0f);
+                        mVal = Math.Clamp(0.24f + ((midAcc / read) * 1.25f), 0.15f, 1.0f);
+                        tVal = Math.Clamp(0.20f + ((highAcc / read) * 1.20f), 0.12f, 1.0f);
                     }
 
-                    bass[s] = Math.Clamp(0.28f + ((lowAcc / read) * 1.15f), 0.18f, 1.0f);
-                    mid[s] = Math.Clamp(0.24f + ((midAcc / read) * 1.25f), 0.15f, 1.0f);
-                    treble[s] = Math.Clamp(0.20f + ((highAcc / read) * 1.20f), 0.12f, 1.0f);
+                    int startSlice = p * slices / samplePoints;
+                    int endSlice = (p + 1) * slices / samplePoints;
+                    for (int s = startSlice; s < endSlice; s++)
+                    {
+                        bass[s] = bVal;
+                        mid[s] = mVal;
+                        treble[s] = tVal;
+                    }
                 }
 
                 _trackBassEnvelope = bass;
@@ -1819,6 +2374,410 @@ public sealed class AudioPlayerService : IAudioPlayerService
     }
 
     /// <inheritdoc />
+    public void PausePlayback()
+    {
+        PausePlaybackCore(clearZeroVolumeFlag: true);
+    }
+
+    private void PausePlaybackCore(bool clearZeroVolumeFlag)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        if (clearZeroVolumeFlag)
+        {
+            _zeroVolumeCoordinator.OnManualPlayPauseOrTrackChange();
+        }
+
+        _pendingAutoPlayAfterLoad = false;
+        _progressiveQueueManager.CancelEndAdvance();
+        try
+        {
+            if (_dspEngine.IsUsingAudioGraphForCurrentTrack)
+            {
+                _dspEngine.PauseGraphPlayback();
+            }
+            else
+            {
+                _mediaPlayer.Pause();
+            }
+        }
+        catch
+        {
+            // Ignore transient pause state
+        }
+
+        if (_isPlaying)
+        {
+            _isPlaying = false;
+            SetTelemetryInterval(Timeout.Infinite, Timeout.Infinite);
+            IsPlayingChanged?.Invoke(this, false);
+        }
+    }
+
+    private void OnSystemMasterVolumeChanged(object? sender, (float MasterVolumeScalar, bool IsMuted) e)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        var action = _zeroVolumeCoordinator.OnSystemVolumeChanged(e.MasterVolumeScalar, e.IsMuted, _isPlaying);
+        ApplyZeroVolumeAction(action);
+    }
+
+    private void ApplyZeroVolumeAction(ZeroVolumePauseAction action)
+    {
+        if (action == ZeroVolumePauseAction.Pause)
+        {
+            PausePlaybackCore(clearZeroVolumeFlag: false);
+        }
+        else if (action == ZeroVolumePauseAction.Resume)
+        {
+            _ = ResumeAfterZeroVolumeAsync();
+        }
+    }
+
+    private async Task ResumeAfterZeroVolumeAsync()
+    {
+        if (IsDisposed || _isPlaying)
+        {
+            return;
+        }
+
+        await TogglePlayPauseAsync().ConfigureAwait(false);
+    }
+
+    private void OnDataLimitReached(object? sender, string message)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        var current = CurrentTrack;
+        // Only pause if the currently playing track is an online stream (local/downloaded tracks stay uninterrupted)
+        if (current is not null && !current.IsDownloadedOrLocal)
+        {
+            PausePlaybackCore(clearZeroVolumeFlag: true);
+        }
+
+        CancelAndClearNextPreload();
+        PlaybackErrorOccurred?.Invoke(this, message);
+    }
+
+    private async Task<ResolvedPlaybackStream?> ResolveOnlineStreamForTrackAsync(
+        TrackItem track,
+        StreamingAudioQuality requestedQuality,
+        CancellationToken cancellationToken)
+    {
+        // 1. Direct certified FLAC Lossless streaming if requested
+        if (requestedQuality == StreamingAudioQuality.FlacLossless)
+        {
+            var flacStream = await _musicDownloadService.ResolveDirectFlacStreamAsync(track, cancellationToken).ConfigureAwait(false);
+            if (flacStream is not null)
+            {
+                return flacStream;
+            }
+        }
+
+        // 2. YouTube Music resolution (at requested tier, or High160 fallback when FLAC was unavailable)
+        string videoId = !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
+            ? track.YouTubeVideoId
+            : !string.IsNullOrWhiteSpace(track.AudioSourceUri) && track.AudioSourceUri.StartsWith("ytmusic://", StringComparison.OrdinalIgnoreCase)
+                ? track.AudioSourceUri
+                : TrackDeduplicationHelper.StripYtmPrefix(track.Id);
+
+        var ytStream = await _youTubeMusicService.ResolveAudioStreamWithMetadataAsync(
+            videoId,
+            requestedQuality,
+            cancellationToken,
+            resolveCanonicalAtv: !track.IsOfficialVideoItem).ConfigureAwait(false);
+
+        if (ytStream is not null && requestedQuality == StreamingAudioQuality.FlacLossless)
+        {
+            ytStream = ytStream with
+            {
+                IsFlacFallback = true,
+                FallbackReason = "FLAC Lossless stream unavailable for this track; playing YouTube Music High."
+            };
+        }
+
+        return ytStream;
+    }
+
+    private static string BuildPreloadTrackKey(TrackItem track) =>
+        !string.IsNullOrWhiteSpace(track.YouTubeVideoId)
+            ? $"ytm:{track.YouTubeVideoId}"
+            : (!string.IsNullOrWhiteSpace(track.Id) ? track.Id : $"{track.Artist}|{track.Title}");
+
+    private bool TryConsumePreloadedStream(
+        string trackKey,
+        StreamingAudioQuality requestedQuality,
+        out ResolvedPlaybackStream? stream)
+    {
+        lock (_preloadLock)
+        {
+            if (_preloadedNext is { } cached &&
+                string.Equals(cached.TrackKey, trackKey, StringComparison.OrdinalIgnoreCase) &&
+                cached.Quality == requestedQuality &&
+                !string.IsNullOrWhiteSpace(cached.Stream.PlaybackUri) &&
+                File.Exists(cached.Stream.PlaybackUri))
+            {
+                stream = cached.Stream;
+                _preloadedNext = null;
+                return true;
+            }
+        }
+
+        stream = null;
+        return false;
+    }
+
+    private void CancelAndClearNextPreload()
+    {
+        CancellationTokenSource? oldCts;
+        lock (_preloadLock)
+        {
+            oldCts = _preloadCts;
+            _preloadCts = null;
+            _preloadedNext = null;
+            _preloadInFlightKey = null;
+        }
+
+        if (oldCts is not null)
+        {
+            try { oldCts.Cancel(); } catch { }
+            try { oldCts.Dispose(); } catch { }
+        }
+    }
+
+    private void MaybeTriggerGaplessPreload()
+    {
+        if (IsDisposed || !_behaviorSettings.GaplessPreloadEnabled || _dataUsageService.IsOnlineStreamingBlocked())
+        {
+            return;
+        }
+
+        var upcoming = _queueController.GetUpcomingQueue();
+        if (upcoming.Count == 0)
+        {
+            return;
+        }
+
+        var nextTrack = upcoming[0];
+        if (nextTrack is null || nextTrack.IsDownloadedOrLocal)
+        {
+            return;
+        }
+
+        StreamingAudioQuality quality = _behaviorSettings.OnlineQuality;
+        string key = BuildPreloadTrackKey(nextTrack);
+        string composite = $"{key}|{quality}";
+
+        CancellationTokenSource cts;
+        lock (_preloadLock)
+        {
+            if (_preloadedNext is { } existing &&
+                string.Equals(existing.TrackKey, key, StringComparison.OrdinalIgnoreCase) &&
+                existing.Quality == quality)
+            {
+                return;
+            }
+
+            if (string.Equals(_preloadInFlightKey, composite, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try { _preloadCts?.Cancel(); } catch { }
+            try { _preloadCts?.Dispose(); } catch { }
+            cts = new CancellationTokenSource();
+            _preloadCts = cts;
+            _preloadInFlightKey = composite;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(1500, cts.Token).ConfigureAwait(false);
+                if (IsDisposed || cts.Token.IsCancellationRequested || !_behaviorSettings.GaplessPreloadEnabled || _dataUsageService.IsOnlineStreamingBlocked())
+                {
+                    return;
+                }
+
+                var resolved = await ResolveOnlineStreamForTrackAsync(nextTrack, quality, cts.Token).ConfigureAwait(false);
+                if (resolved is null || cts.Token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                if (resolved.DownloadedNetworkBytes > 0)
+                {
+                    string qLabel = resolved.FormatQualityLabel();
+                    string sLabel = FormatSourceDisplayLabel(resolved.SourceKind, resolved.ProviderLabel, resolved.IsFlacFallback);
+                    await _dataUsageService.RecordUsageAsync(
+                        nextTrack,
+                        DataUsageCategory.Audio,
+                        resolved.DownloadedNetworkBytes,
+                        qLabel,
+                        sLabel,
+                        DataUsageNetworkType.Wifi,
+                        cts.Token).ConfigureAwait(false);
+                    // Mark DownloadedNetworkBytes = 0 on cached stream so playback does not double-count
+                    resolved = resolved with { DownloadedNetworkBytes = 0 };
+                }
+
+                lock (_preloadLock)
+                {
+                    if (!cts.Token.IsCancellationRequested)
+                    {
+                        _preloadedNext = (key, quality, resolved);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected on queue/track change
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Gapless next-track preload skipped for '{Title}'.", nextTrack.Title);
+            }
+            finally
+            {
+                lock (_preloadLock)
+                {
+                    if (string.Equals(_preloadInFlightKey, composite, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _preloadInFlightKey = null;
+                    }
+                }
+            }
+        });
+    }
+
+    private static ResolvedPlaybackStream InspectLocalAudioFile(
+        string filePath,
+        PlaybackSourceKind sourceKind,
+        string providerLabel,
+        StreamingAudioQuality requestedQuality)
+    {
+        long fileSize = 0;
+        string codec = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant();
+        int bitrateKbps = 0;
+        int sampleRateHz = 0;
+        int channels = 0;
+        int bitDepth = 0;
+        string isrc = string.Empty;
+
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                fileSize = new FileInfo(filePath).Length;
+                using var tagFile = TagLib.File.Create(filePath);
+                var props = tagFile.Properties;
+                if (props is not null)
+                {
+                    bitrateKbps = props.AudioBitrate;
+                    sampleRateHz = props.AudioSampleRate;
+                    channels = props.AudioChannels;
+                    bitDepth = props.BitsPerSample;
+                    var firstCodec = props.Codecs?.FirstOrDefault(c => c is not null);
+                    if (firstCodec is not null && !string.IsNullOrWhiteSpace(firstCodec.Description))
+                    {
+                        string desc = firstCodec.Description;
+                        if (desc.Contains("FLAC", StringComparison.OrdinalIgnoreCase)) codec = "FLAC";
+                        else if (desc.Contains("MPEG-4 Audio", StringComparison.OrdinalIgnoreCase) || desc.Contains("AAC", StringComparison.OrdinalIgnoreCase)) codec = "AAC";
+                        else if (desc.Contains("MPEG", StringComparison.OrdinalIgnoreCase) && desc.Contains("Layer 3", StringComparison.OrdinalIgnoreCase)) codec = "MP3";
+                        else if (desc.Contains("Opus", StringComparison.OrdinalIgnoreCase)) codec = "Opus";
+                        else if (desc.Contains("Vorbis", StringComparison.OrdinalIgnoreCase)) codec = "Vorbis";
+                        else if (desc.Contains("PCM", StringComparison.OrdinalIgnoreCase)) codec = "PCM / WAV";
+                    }
+                }
+
+                isrc = tagFile.Tag?.ISRC ?? string.Empty;
+            }
+        }
+        catch
+        {
+            // Keep extension fallback
+        }
+
+        StreamingAudioQuality actualQuality = string.Equals(codec, "FLAC", StringComparison.OrdinalIgnoreCase)
+            ? StreamingAudioQuality.FlacLossless
+            : StreamingAudioQuality.High160;
+
+        return new ResolvedPlaybackStream(
+            PlaybackUri: filePath,
+            SourceKind: sourceKind,
+            ProviderLabel: providerLabel,
+            RequestedQuality: requestedQuality,
+            ActualQuality: actualQuality,
+            IsFlacFallback: false,
+            FallbackReason: null,
+            Codec: codec,
+            BitrateKbps: bitrateKbps,
+            SampleRateHz: sampleRateHz,
+            ChannelCount: channels,
+            BitDepth: bitDepth,
+            FileSizeBytes: fileSize,
+            Isrc: isrc,
+            DownloadedNetworkBytes: 0);
+    }
+
+    private static string FormatSourceDisplayLabel(PlaybackSourceKind sourceKind, string providerLabel, bool isFlacFallback) =>
+        sourceKind switch
+        {
+            PlaybackSourceKind.Local => "Local File",
+            PlaybackSourceKind.DownloadedOffline => "Downloaded Offline",
+            PlaybackSourceKind.YouTubeVideo => "YouTube Video",
+            PlaybackSourceKind.FlacGdStudio => string.IsNullOrWhiteSpace(providerLabel) ? "FLAC Lossless (GDStudio)" : providerLabel,
+            PlaybackSourceKind.FlacTidal => "FLAC Lossless (Tidal)",
+            PlaybackSourceKind.FlacQobuz => "FLAC Lossless (Qobuz)",
+            PlaybackSourceKind.YouTubeMusic => isFlacFallback ? "YouTube Music (FLAC Fallback)" : "YouTube Music",
+            _ => providerLabel
+        };
+
+    private void UpdateCurrentTrackPlaybackInfo(TrackItem track, ResolvedPlaybackStream resolved)
+    {
+        var info = new TrackPlaybackInfo(
+            TrackId: track.Id,
+            Title: track.Title,
+            Artist: track.Artist,
+            Album: string.IsNullOrWhiteSpace(track.Album) ? "—" : track.Album,
+            Duration: Duration > TimeSpan.Zero ? Duration : track.Duration,
+            SourceKind: resolved.SourceKind,
+            SourceDisplayLabel: FormatSourceDisplayLabel(resolved.SourceKind, resolved.ProviderLabel, resolved.IsFlacFallback),
+            ProviderLabel: resolved.ProviderLabel,
+            RequestedQuality: resolved.RequestedQuality,
+            ActualQualityLabel: resolved.FormatQualityLabel(),
+            IsFlacFallback: resolved.IsFlacFallback,
+            FallbackReason: resolved.FallbackReason,
+            Codec: string.IsNullOrWhiteSpace(resolved.Codec) ? "—" : resolved.Codec,
+            BitrateKbps: resolved.BitrateKbps,
+            SampleRateHz: resolved.SampleRateHz,
+            ChannelCount: resolved.ChannelCount,
+            BitDepth: resolved.BitDepth,
+            FileSizeBytes: resolved.FileSizeBytes,
+            FilePathOrUri: !string.IsNullOrWhiteSpace(track.LocalOfflineFilePath)
+                ? track.LocalOfflineFilePath
+                : (track.SourceType == MediaSourceType.Local ? track.AudioSourceUri : $"ytmusic://{track.YouTubeVideoId}"),
+            Isrc: resolved.Isrc,
+            ReleaseYear: track.ReleaseYear,
+            Genre: track.Genre,
+            TrackNumber: track.TrackNumber,
+            LyricsProviderName: track.LyricsProviderName);
+
+        _currentTrackPlaybackInfo = info;
+        CurrentTrackPlaybackInfoChanged?.Invoke(this, info);
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -1828,6 +2787,10 @@ public sealed class AudioPlayerService : IAudioPlayerService
 
         Interlocked.Increment(ref _activePlayRequestId);
         CancelActiveLoadCts();
+        CancelAndClearNextPreload();
+        _systemVolumeMonitor.SystemVolumeChanged -= OnSystemMasterVolumeChanged;
+        _systemVolumeMonitor.Dispose();
+        _dataUsageService.DataLimitReached -= OnDataLimitReached;
         _dspEngine.TrackPlaybackCompleted -= OnDspGraphTrackCompleted;
         _dspEngine.EffectiveRateChanged -= OnDspEffectiveRateChanged;
         _dspEngine.Dispose();

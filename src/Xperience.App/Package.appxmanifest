@@ -1,0 +1,157 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 com rescap">
+
+  <Identity
+    Name="XperienceMusicPlayer"
+    Publisher="CN=AithonML"
+    Version="0.2.0.0" />
+
+  <mp:PhoneIdentity
+    PhoneProductId="8f6d4a2e-9b3c-4e1d-a7f5-2c8e6b4d1a90"
+    PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+
+  <Properties>
+    <DisplayName>Xperience Music Player</DisplayName>
+    <PublisherDisplayName>Xperience</PublisherDisplayName>
+    <Logo>Assets\Branding\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application
+      Id="App"
+      Executable="$targetnametoken$.exe"
+      EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="Xperience Music Player"
+        Description="Xperience Music Player for Windows 11"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Branding\Square150x150Logo.png"
+        Square44x44Logo="Assets\Branding\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Branding\xperience_icon_round_512.png" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- Out-of-process COM Server for Windows 11 Widgets Board -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer
+              Executable="Xperience.App.exe"
+              Arguments="-RegisterProcessAsComServer"
+              DisplayName="Xperience Music Widget Provider">
+              <com:Class
+                Id="8F6D4A2E-9B3C-4E1D-A7F5-2C8E6B4D1A90"
+                DisplayName="XperienceWidgetProvider" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <!-- Windows 11 Widgets Board Extension -->
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension
+            Name="com.microsoft.windows.widgets"
+            DisplayName="Xperience Music Widgets"
+            Id="XperienceMusicWidgets"
+            PublicFolder="Public">
+            <uap3:Properties>
+              <WidgetProvider>
+                <ProviderIcons>
+                  <Icon Path="Assets\Branding\xperience_icon_round_512.png" />
+                </ProviderIcons>
+                <Activation>
+                  <CreateInstance ClassId="8F6D4A2E-9B3C-4E1D-A7F5-2C8E6B4D1A90" />
+                </Activation>
+                <TrustedPackageFamilyNames>
+                  <TrustedPackageFamilyName>Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe</TrustedPackageFamilyName>
+                </TrustedPackageFamilyNames>
+                <Definitions>
+                  <Definition
+                    Id="XperienceMiniPlayer"
+                    DisplayName="Mini Player"
+                    Description="Control playback with album art, progress, and favorites."
+                    AllowMultiple="false">
+                    <Capabilities>
+                      <Capability>
+                        <Size Name="medium" />
+                      </Capability>
+                    </Capabilities>
+                    <ThemeResources>
+                      <Icons>
+                        <Icon Path="Assets\Branding\xperience_icon_round_512.png" />
+                      </Icons>
+                      <Screenshots>
+                        <Screenshot Path="Assets\Branding\xperience_icon_round_512.png" DisplayAltText="Xperience Mini Player widget" />
+                      </Screenshots>
+                    </ThemeResources>
+                  </Definition>
+
+                  <Definition
+                    Id="XperienceRecommendedPlaylists"
+                    DisplayName="Recommended Playlists"
+                    Description="Jump straight into your personalized playlists, mixes, and Liked Songs."
+                    AllowMultiple="false">
+                    <Capabilities>
+                      <Capability>
+                        <Size Name="medium" />
+                      </Capability>
+                      <Capability>
+                        <Size Name="large" />
+                      </Capability>
+                    </Capabilities>
+                    <ThemeResources>
+                      <Icons>
+                        <Icon Path="Assets\Branding\xperience_icon_round_512.png" />
+                      </Icons>
+                      <Screenshots>
+                        <Screenshot Path="Assets\Branding\xperience_icon_round_512.png" DisplayAltText="Xperience Recommended Playlists widget" />
+                      </Screenshots>
+                    </ThemeResources>
+                  </Definition>
+
+                  <Definition
+                    Id="XperienceMusicHub"
+                    DisplayName="Music Hub"
+                    Description="Now-playing controls and Ambient mode paired with recommended playlists."
+                    AllowMultiple="false">
+                    <Capabilities>
+                      <Capability>
+                        <Size Name="large" />
+                      </Capability>
+                    </Capabilities>
+                    <ThemeResources>
+                      <Icons>
+                        <Icon Path="Assets\Branding\xperience_icon_round_512.png" />
+                      </Icons>
+                      <Screenshots>
+                        <Screenshot Path="Assets\Branding\xperience_icon_round_512.png" DisplayAltText="Xperience Music Hub widget" />
+                      </Screenshots>
+                    </ThemeResources>
+                  </Definition>
+                </Definitions>
+              </WidgetProvider>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

@@ -36,6 +36,7 @@ public sealed partial class ShellPage
         DispatcherQueue.TryEnqueue(() =>
         {
             _isSplashCompleted = true;
+            RefreshTitleBarPassthroughRegions();
             if (_pendingStartupUpdateRelease is { } pending && !_isUpdateDialogOpen)
             {
                 _pendingStartupUpdateRelease = null;

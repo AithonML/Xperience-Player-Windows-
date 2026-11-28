@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Xperience.Core.Domain.Entities;
 using Xperience.Core.Domain.Enums;
+using Xperience.Core.Domain.Models;
 
 namespace Xperience.App.ViewModels;
 
@@ -15,6 +16,8 @@ public sealed partial class ShellViewModel
     private bool _pendingAutoSwitchToVideoMode;
     private bool _hasRetriedMusicVideoForCurrentTrack;
     private string? _resolvedMusicVideoTrackId;
+    private OfficialMusicVideoMetadata? _currentOfficialVideoMetadata;
+    private bool _isSwitchingAudioVideoVariant;
 
     /// <summary>
     /// Gets the artist's official music videos ("Videos oficiales") displayed on the Artist Detail screen.
@@ -34,6 +37,7 @@ public sealed partial class ShellViewModel
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FullscreenAudioVideoSwitcherVisibility))]
+    [NotifyPropertyChangedFor(nameof(SidebarNowPlayingTitleVisibility))]
     public partial bool IsCurrentTrackMusicVideoAvailable { get; set; }
 
     [ObservableProperty]
@@ -63,6 +67,9 @@ public sealed partial class ShellViewModel
 
     public Visibility FullscreenAudioVideoSwitcherVisibility =>
         IsCurrentTrackMusicVideoAvailable ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility SidebarNowPlayingTitleVisibility =>
+        IsCurrentTrackMusicVideoAvailable ? Visibility.Collapsed : Visibility.Visible;
 
     public Visibility FullscreenVideoLayerVisibility =>
         IsFullscreenVideoMode && !string.IsNullOrWhiteSpace(CurrentMusicVideoStreamUri)
@@ -145,33 +152,59 @@ public sealed partial class ShellViewModel
     }
 
     [RelayCommand]
-    public void SelectFullscreenSongMode()
+    public async Task SelectFullscreenSongModeAsync()
     {
         _pendingAutoSwitchToVideoMode = false;
         DismissFullscreenVideoError();
-        if (IsFullscreenVideoMode)
+        if (!IsFullscreenVideoMode || _isSwitchingAudioVideoVariant)
         {
+            return;
+        }
+
+        _isSwitchingAudioVideoVariant = true;
+        try
+        {
+            var meta = _currentOfficialVideoMetadata;
+            var track = CurrentTrack;
+            await _audioPlayerService.SwitchTrackAudioVariantAsync(
+                officialVideoId: meta?.OfficialVideoId,
+                useVideoAudio: false,
+                resolveTargetPosition: (_, _, videoPos) =>
+                    meta is not null
+                        ? meta.MapVideoToSongPosition(videoPos, track?.Duration)
+                        : videoPos);
+
             IsFullscreenVideoMode = false;
             MusicVideoStateChanged?.Invoke(this, (CurrentMusicVideoStreamUri, false));
+            UpdateActiveLyricForPosition(_audioPlayerService.Position, forceNotify: true);
+        }
+        finally
+        {
+            _isSwitchingAudioVideoVariant = false;
         }
     }
 
     [RelayCommand]
-    public void SelectFullscreenVideoMode()
+    public async Task SelectFullscreenVideoModeAsync()
     {
         DismissFullscreenVideoError();
+        if (_isSwitchingAudioVideoVariant)
+        {
+            return;
+        }
+
         if (IsResolvingMusicVideo)
         {
             _pendingAutoSwitchToVideoMode = true;
             return;
         }
 
-        if (!IsCurrentTrackMusicVideoAvailable || string.IsNullOrWhiteSpace(CurrentMusicVideoStreamUri))
+        if (string.IsNullOrWhiteSpace(CurrentMusicVideoStreamUri))
         {
             if (CurrentTrack is not null && CurrentTrack.Id != "empty_state_track")
             {
                 _pendingAutoSwitchToVideoMode = true;
-                _ = TriggerMusicVideoLookupForTrackAsync(CurrentTrack);
+                await TriggerMusicVideoLookupForTrackAsync(CurrentTrack);
             }
 
             return;
@@ -179,8 +212,62 @@ public sealed partial class ShellViewModel
 
         if (!IsFullscreenVideoMode)
         {
+            await ActivateVideoAudioAndVisualModeAsync(CurrentTrack, CurrentMusicVideoStreamUri);
+        }
+    }
+
+    private async Task ActivateVideoAudioAndVisualModeAsync(TrackItem? track, string? videoStreamUri)
+    {
+        if (track is null || string.IsNullOrWhiteSpace(videoStreamUri) || _isSwitchingAudioVideoVariant)
+        {
+            return;
+        }
+
+        _isSwitchingAudioVideoVariant = true;
+        try
+        {
+            var meta = _currentOfficialVideoMetadata;
+            string? officialId = meta?.OfficialVideoId;
+            if (string.IsNullOrWhiteSpace(officialId))
+            {
+                officialId = track.OfficialVideoId;
+            }
+
+            bool switched = await _audioPlayerService.SwitchTrackAudioVariantAsync(
+                officialVideoId: officialId,
+                useVideoAudio: true,
+                resolveTargetPosition: (songPath, videoAudioPath, songPos) =>
+                {
+                    if (meta is not null && meta.Segments.Count == 0 &&
+                        !string.IsNullOrWhiteSpace(songPath) &&
+                        !string.IsNullOrWhiteSpace(videoAudioPath))
+                    {
+                        var computed = Services.Audio.AudioOffsetAligner.ComputeAlignmentSegments(songPath, videoAudioPath);
+                        if (computed.Count > 0)
+                        {
+                            meta = meta with { Segments = computed };
+                            _currentOfficialVideoMetadata = meta;
+                        }
+                    }
+
+                    return meta is not null
+                        ? meta.MapSongToVideoPosition(songPos)
+                        : songPos;
+                });
+
+            if (!switched && !_audioPlayerService.IsVideoAudioModeActive)
+            {
+                ShowFullscreenVideoError("Could not switch audio to the official music video.");
+                return;
+            }
+
             IsFullscreenVideoMode = true;
-            MusicVideoStateChanged?.Invoke(this, (CurrentMusicVideoStreamUri, true));
+            MusicVideoStateChanged?.Invoke(this, (videoStreamUri, true));
+            UpdateActiveLyricForPosition(_audioPlayerService.Position, forceNotify: true);
+        }
+        finally
+        {
+            _isSwitchingAudioVideoVariant = false;
         }
     }
 
@@ -321,6 +408,7 @@ public sealed partial class ShellViewModel
         CancelAndDisposeCts(ref _musicVideoLookupCts);
         DismissFullscreenVideoError();
         _resolvedMusicVideoTrackId = null;
+        _currentOfficialVideoMetadata = null;
         _hasRetriedMusicVideoForCurrentTrack = false;
         IsFullscreenVideoMode = false;
         IsCurrentTrackMusicVideoAvailable = false;
@@ -329,15 +417,71 @@ public sealed partial class ShellViewModel
         MusicVideoStateChanged?.Invoke(this, (null, false));
     }
 
+    internal async Task CheckOfficialMusicVideoAvailabilityAsync(TrackItem track)
+    {
+        if (track is null || track.Id == "empty_state_track" || string.IsNullOrWhiteSpace(track.Title))
+        {
+            ResetMusicVideoStateForTrackChange();
+            return;
+        }
+
+        if (_pendingAutoSwitchToVideoMode || track.IsOfficialVideoItem)
+        {
+            await TriggerMusicVideoLookupForTrackAsync(track);
+            return;
+        }
+
+        ResetMusicVideoStateForTrackChange();
+        var token = ReplaceCts(ref _musicVideoLookupCts).Token;
+
+        try
+        {
+            await Task.Delay(180, token);
+            var metadata = await Task.Run(
+                () => _youTubeMusicService.ResolveOfficialMusicVideoMetadataAsync(track, token),
+                token);
+
+            if (token.IsCancellationRequested || CurrentTrack?.Id != track.Id)
+            {
+                return;
+            }
+
+            _dispatcherQueue.TryEnqueue(() =>
+            {
+                if (token.IsCancellationRequested || CurrentTrack?.Id != track.Id)
+                {
+                    return;
+                }
+
+                _currentOfficialVideoMetadata = metadata;
+                IsCurrentTrackMusicVideoAvailable = metadata is not null;
+                if (metadata is not null && !string.IsNullOrWhiteSpace(metadata.OfficialVideoId))
+                {
+                    track.OfficialVideoId = metadata.OfficialVideoId;
+                }
+
+                if (_pendingAutoSwitchToVideoMode && metadata is not null)
+                {
+                    _ = TriggerMusicVideoLookupForTrackAsync(track);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Official music video availability check skipped for '{Title}'.", track.Title);
+        }
+    }
+
     internal async Task TriggerMusicVideoLookupForTrackAsync(TrackItem track, bool forceLocalDownload = false)
     {
         bool wantsImmediateVideo = _pendingAutoSwitchToVideoMode || (track?.IsOfficialVideoItem == true);
 
-        // Defer YouTube Music video stream resolution until Fullscreen Now Playing is actually open
-        // (unless explicitly triggered for an official video item or forced retry).
-        if (!IsFullscreenNowPlayingOpen && !forceLocalDownload && !wantsImmediateVideo)
+        if (!wantsImmediateVideo && !forceLocalDownload)
         {
-            ResetMusicVideoStateForTrackChange();
+            await CheckOfficialMusicVideoAvailabilityAsync(track!);
             return;
         }
 
@@ -352,7 +496,6 @@ public sealed partial class ShellViewModel
         var token = ReplaceCts(ref _musicVideoLookupCts).Token;
 
         IsFullscreenVideoMode = false;
-        IsCurrentTrackMusicVideoAvailable = false;
         CurrentMusicVideoStreamUri = null;
         IsResolvingMusicVideo = true;
         MusicVideoStateChanged?.Invoke(this, (null, false));
@@ -360,6 +503,7 @@ public sealed partial class ShellViewModel
         if (track is null || track.Id == "empty_state_track" || string.IsNullOrWhiteSpace(track.Title))
         {
             _resolvedMusicVideoTrackId = null;
+            IsCurrentTrackMusicVideoAvailable = false;
             IsResolvingMusicVideo = false;
             return;
         }
@@ -384,7 +528,7 @@ public sealed partial class ShellViewModel
                 return;
             }
 
-            _dispatcherQueue.TryEnqueue(() =>
+            _dispatcherQueue.TryEnqueue(async () =>
             {
                 IsResolvingMusicVideo = false;
                 if (token.IsCancellationRequested || CurrentTrack?.Id != track.Id)
@@ -397,21 +541,33 @@ public sealed partial class ShellViewModel
 
                 if (resolvedVideo is not null && !string.IsNullOrWhiteSpace(resolvedVideo.StreamUri))
                 {
+                    _currentOfficialVideoMetadata ??= new OfficialMusicVideoMetadata(
+                        SongVideoId: resolvedVideo.SongVideoId ?? track.YouTubeVideoId,
+                        OfficialVideoId: resolvedVideo.VideoId,
+                        Segments: resolvedVideo.Segments ?? []);
+                    if (resolvedVideo.Segments is { Count: > 0 } && _currentOfficialVideoMetadata.Segments.Count == 0)
+                    {
+                        _currentOfficialVideoMetadata = _currentOfficialVideoMetadata with { Segments = resolvedVideo.Segments };
+                    }
+
                     CurrentMusicVideoStreamUri = resolvedVideo.StreamUri;
                     IsCurrentTrackMusicVideoAvailable = true;
                     if (shouldSwitchNow)
                     {
-                        IsFullscreenVideoMode = true;
-                        MusicVideoStateChanged?.Invoke(this, (resolvedVideo.StreamUri, true));
+                        await ActivateVideoAudioAndVisualModeAsync(track, resolvedVideo.StreamUri);
                     }
                     else
                     {
                         MusicVideoStateChanged?.Invoke(this, (resolvedVideo.StreamUri, false));
                     }
                 }
-                else if (forceLocalDownload && shouldSwitchNow)
+                else
                 {
-                    ShowFullscreenVideoError("Could not play the official music video for this track.");
+                    IsCurrentTrackMusicVideoAvailable = false;
+                    if (forceLocalDownload || shouldSwitchNow)
+                    {
+                        ShowFullscreenVideoError("Official music video is not available for this track.");
+                    }
                 }
             });
         }

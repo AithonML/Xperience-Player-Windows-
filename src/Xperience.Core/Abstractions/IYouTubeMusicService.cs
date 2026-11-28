@@ -31,6 +31,15 @@ public interface IYouTubeMusicService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Resolves a quality-tier-aware audio stream with certified codec, bitrate, sample rate, channel count, and byte size metadata.
+    /// </summary>
+    Task<ResolvedPlaybackStream?> ResolveAudioStreamWithMetadataAsync(
+        string videoId,
+        Domain.Enums.StreamingAudioQuality requestedQuality,
+        CancellationToken cancellationToken = default,
+        bool resolveCanonicalAtv = true);
+
+    /// <summary>
     /// Retrieves the official ordered tracklist for a specific album on YouTube Music
     /// using the InnerTube <c>browse</c> (<c>MPREb_...</c>) album endpoint.
     /// </summary>
@@ -75,7 +84,8 @@ public interface IYouTubeMusicService
     /// <returns>An <see cref="ArtistDetailProfile"/> populated exclusively from YouTube Music, or <c>null</c> if not found.</returns>
     Task<ArtistDetailProfile?> GetArtistProfileAsync(
         string artistName,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? explicitBrowseId = null);
 
     /// <summary>
     /// Resolves the official high-resolution artist portrait image URL directly from YouTube Music
@@ -270,6 +280,14 @@ public interface IYouTubeMusicService
     Task<IReadOnlyList<TrackItem>> SearchArtistOfficialVideosAsync(
         string artistName,
         int limit = 10,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves whether a track has an authentic Official Music Video (<c>MUSIC_VIDEO_TYPE_OMV</c>) counterpart
+    /// and any InnerTube <c>segmentMap</c> timeline alignment segments, without downloading video media bytes.
+    /// </summary>
+    Task<OfficialMusicVideoMetadata?> ResolveOfficialMusicVideoMetadataAsync(
+        TrackItem track,
         CancellationToken cancellationToken = default);
 
     /// <summary>
